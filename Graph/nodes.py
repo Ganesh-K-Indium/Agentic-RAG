@@ -9,54 +9,62 @@ from load_vector_dbs.prompts_and_chains import (get_retrival_grader_chain, get_r
                                                           get_company_name, get_question_rewriter_chain)
 from load_vector_dbs.load_dbs import load_vector_database
 load_dotenv()
-
 def retrieve(state):
-    """
-    Retrieve documents
-
-    Args:
-        state (dict): The current graph state
-
-    Returns:
-        state (dict): New key added to state, documents, that contains retrieved documents
-    """
     print("---RETRIEVE---")
     messages = state["messages"]
     question = messages[-1].content
+
     init = load_vector_database()
     retriever, _, _ = init.get_text_retriever()
     documents = retriever.invoke(question)
+
+    tool_call_entry = {
+        "tool": "text_retriever",
+        "input": question,
+        "output": [d.page_content for d in documents]
+    }
+
     print(f"DOCUMENTS RETRIEVED AND NUMBER OF DOCUMENTS ARE {len(documents)}")
-    return {"documents": documents}
+    return {
+        "documents": documents,
+        "tool_calls": state.get("tool_calls", []) + [tool_call_entry]
+    }
+
 
 def retrieve_from_images_data(state):
-    """
-    Retrieve documents from image_retriever
-
-    Args:
-        state (dict): The current graph state
-
-    Returns:
-        state (dict): append new documents to documents state key retrieved by image retriever.
-    """
+    print("---RETRIEVE FROM IMAGES---")
     messages = state["messages"]
     question = messages[-1].content
     documents = state["documents"]
+
     init = load_vector_database()
     _, image_retriever, _ = init.get_image_retriever()
     results = image_retriever.invoke(question)
+
     llm = ChatOpenAI(model="gpt-4o-mini")
     company_extractor = get_company_name(llm)
-    company = company_extractor.invoke({"question":question})
+    company = company_extractor.invoke({"question": question})
     print(company)
-    filtered_results = [doc for doc in results if doc.metadata.get("company").lower() in company.company.lower()]
-    print(f"DOCUMENTS RETRIEVED FROM IMAGE AND NUMBER OF DOCUMENTS ARE {len(filtered_results)}")
-    if len(filtered_results)>0:
-        for doc in filtered_results:
-            documents.append(doc)
-    
-    print(f"UPDATING NEW DOCUMENTS IN STATE NOW LENGTH OF RELAVENT DOCUMENTS ARE {len(documents)}")
-    return {"documents": documents}
+
+    filtered_results = [
+        doc for doc in results
+        if doc.metadata.get("company", "").lower() in company.company.lower()
+    ]
+
+    if filtered_results:
+        documents.extend(filtered_results)
+
+    tool_call_entry = {
+        "tool": "image_retriever",
+        "input": question,
+        "output": [d.page_content for d in filtered_results]
+    }
+
+    print(f"UPDATED DOCUMENTS LENGTH: {len(documents)}")
+    return {
+        "documents": documents,
+        "tool_calls": state.get("tool_calls", []) + [tool_call_entry]
+    }
 
 
 def generate(state):
@@ -72,74 +80,79 @@ def generate(state):
     )
 
     retry_count = state.get("retry_count", 0)
-    return {"Intermediate_message": Intermediate_message, "retry_count": retry_count + 1}
+
+    tool_call_entry = {
+        "tool": "rag_chain",
+        "input": {"question": question, "documents": [d.page_content for d in documents]},
+        "output": Intermediate_message
+    }
+
+    return {
+        "Intermediate_message": Intermediate_message,
+        "retry_count": retry_count + 1,
+        "tool_calls": state.get("tool_calls", []) + [tool_call_entry]
+    }
 
 
 def grade_documents(state):
-    """
-    Determines whether the retrieved documents are relevant to the question.
-
-    Args:
-        state (dict): The current graph state
-
-    Returns:
-        state (dict): Updates documents key with only filtered relevant documents
-    """
-
-    print("---CHECK DOCUMENT RELEVANCE TO QUESTION---")
+    print("---CHECK DOCUMENT RELEVANCE---")
     messages = state["messages"]
     question = messages[-1].content
     documents = state["documents"]
-    print(f"TOTAL NUMBER OF DOCUMENTS ARE {len(documents)}")
-    # Score each doc
+
     filtered_docs = []
     llm_grade_document = ChatOpenAI(model="gpt-4o")
     retrieval_grader = get_retrival_grader_chain(llm_grade_document)
+
+    results_log = []
     for d in documents:
-        score = retrieval_grader.invoke(
-            {"question": question, "document": d.page_content}
-        )
+        score = retrieval_grader.invoke({"question": question, "document": d.page_content})
         grade = score.binary_score
-        print(grade)
+        results_log.append({"doc": d.page_content, "grade": grade})
         if grade.lower() == "yes":
-            print("---GRADE: DOCUMENT RELEVANT---")
             filtered_docs.append(d)
-        else:
-            print("---GRADE: DOCUMENT NOT RELEVANT---")
-            continue        
-        
-    print(f"LENGTH OF DOCUMENTS ARE {len(filtered_docs)}")
-    return {"documents": filtered_docs}
+
+    tool_call_entry = {
+        "tool": "retrieval_grader",
+        "input": {"question": question, "documents": [d.page_content for d in documents]},
+        "output": results_log
+    }
+
+    print(f"FILTERED DOCS COUNT: {len(filtered_docs)}")
+    return {
+        "documents": filtered_docs,
+        "tool_calls": state.get("tool_calls", []) + [tool_call_entry]
+    }
+
 
 def transform_query(state):
-    """
-    Transform the query to produce a better question.
-
-    Args:
-        state (dict): The current graph state
-
-    Returns:
-        state (dict): Updates question key with a re-phrased question
-    """
-
     print("---TRANSFORM QUERY---")
     messages = state["messages"]
     question = messages[-1].content
 
-    # Re-write question
     llm = ChatGroq(model="llama-3.3-70b-versatile")
     question_rewriter = get_question_rewriter_chain(llm)
     better_question = question_rewriter.invoke({"question": question})
-    return {"messages": [better_question]}
+
+    tool_call_entry = {
+        "tool": "question_rewriter",
+        "input": question,
+        "output": better_question
+    }
+
+    return {
+        "messages": [better_question],
+        "tool_calls": state.get("tool_calls", []) + [tool_call_entry]
+    }
+
 
 def web_search(state):
     print("---WEB SEARCH---")
     messages = state["messages"]
     question = messages[-1].content
     web_search_tool = TavilySearch(k=3)
-    docs = web_search_tool.invoke({"query": question}) # or however you're calling the API
+    docs = web_search_tool.invoke({"query": question})
 
-    # Normalize docs into strings
     if isinstance(docs, list):
         web_results = "\n".join(
             d["content"] if isinstance(d, dict) and "content" in d else str(d)
@@ -148,21 +161,26 @@ def web_search(state):
     else:
         web_results = str(docs)
 
+    tool_call_entry = {
+        "tool": "web_search",
+        "input": question,
+        "output": web_results
+    }
+
     return {
-        **state,
-        "documents": [Document(page_content=web_results)],  # keep consistent with retriever
+        "documents": [Document(page_content=web_results)],
+        "tool_calls": state.get("tool_calls", []) + [tool_call_entry]
     }
 
 
 def financial_web_search(state):
-    print("---WEB SEARCH---")
+    print("---FINANCIAL WEB SEARCH---")
     messages = state["messages"]
     question = messages[-1].content
 
     web_search_tool = TavilySearch(k=3)
     docs = web_search_tool.invoke({"query": question})
 
-    # Normalize docs into text
     if isinstance(docs, list):
         web_results = "\n".join(
             d.get("content", "") if isinstance(d, dict) else str(d)
@@ -171,19 +189,30 @@ def financial_web_search(state):
     else:
         web_results = str(docs)
 
-    # ✅ Always return a list of Documents
-    return {"documents": [Document(page_content=web_results)]}  
+    tool_call_entry = {
+        "tool": "financial_web_search",
+        "input": question,
+        "output": web_results
+    }
+
+    return {
+        "documents": [Document(page_content=web_results)],
+        "tool_calls": state.get("tool_calls", []) + [tool_call_entry]
+    }
+
 
 def show_result(state):
-    """
-    Show result will be used to set the final result in the state graph and finally end the process
-    
-    Args:
-        state (dict): The current graph state
+    print("---SHOW RESULT---")
+    Final_answer = AIMessage(content=state["Intermediate_message"])
 
-    Returns:a
-        state (dict): Updates the final answer in the messages
-    """
-    Final_answer = AIMessage(content = state["Intermediate_message"])
+    tool_call_entry = {
+        "tool": "final_output",
+        "input": state.get("Intermediate_message"),
+        "output": Final_answer.content
+    }
+
     print(f'SHOWING THE RESULTS: {Final_answer}')
-    return {"messages":Final_answer}   
+    return {
+        "messages": Final_answer,
+        "tool_calls": state.get("tool_calls", []) + [tool_call_entry]
+    }

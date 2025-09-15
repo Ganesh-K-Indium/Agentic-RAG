@@ -22,7 +22,7 @@ def list_pdfs_in_space(space_key=SPACE_KEY, limit=50):
     response = requests.get(url, auth=AUTH, params=params)
 
     if response.status_code != 200:
-        raise Exception(f"❌ Failed to list pages: {response.text}")
+        raise Exception(f"Failed to list pages: {response.text}")
 
     pages = response.json().get("results", [])
     pdf_links = []
@@ -56,7 +56,7 @@ def download_all_pdfs(space_key=SPACE_KEY, limit=50):
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
             downloaded_files.append(file_path)
-            print(f"✅ Downloaded: {pdf['title']}")
+            print(f"Downloaded: {pdf['title']}")
         else:
-            print(f"❌ Failed to download {pdf['title']}: {response.text}")
+            print(f"Failed to download {pdf['title']}: {response.text}")
     return downloaded_files
