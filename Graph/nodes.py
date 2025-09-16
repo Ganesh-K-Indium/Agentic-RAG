@@ -19,9 +19,7 @@ def retrieve(state):
     documents = retriever.invoke(question)
 
     tool_call_entry = {
-        "tool": "text_retriever",
-        "input": question,
-        "output": [d.page_content for d in documents]
+        "tool": "text_retriever"
     }
 
     print(f"DOCUMENTS RETRIEVED AND NUMBER OF DOCUMENTS ARE {len(documents)}")
@@ -55,9 +53,7 @@ def retrieve_from_images_data(state):
         documents.extend(filtered_results)
 
     tool_call_entry = {
-        "tool": "image_retriever",
-        "input": question,
-        "output": [d.page_content for d in filtered_results]
+        "tool": "image_retriever"
     }
 
     print(f"UPDATED DOCUMENTS LENGTH: {len(documents)}")
@@ -82,9 +78,7 @@ def generate(state):
     retry_count = state.get("retry_count", 0)
 
     tool_call_entry = {
-        "tool": "rag_chain",
-        "input": {"question": question, "documents": [d.page_content for d in documents]},
-        "output": Intermediate_message
+        "tool": "rag_chain"
     }
 
     return {
@@ -113,9 +107,7 @@ def grade_documents(state):
             filtered_docs.append(d)
 
     tool_call_entry = {
-        "tool": "retrieval_grader",
-        "input": {"question": question, "documents": [d.page_content for d in documents]},
-        "output": results_log
+        "tool": "retrieval_grader"
     }
 
     print(f"FILTERED DOCS COUNT: {len(filtered_docs)}")
@@ -135,9 +127,7 @@ def transform_query(state):
     better_question = question_rewriter.invoke({"question": question})
 
     tool_call_entry = {
-        "tool": "question_rewriter",
-        "input": question,
-        "output": better_question
+        "tool": "question_rewriter"
     }
 
     return {
@@ -162,9 +152,7 @@ def web_search(state):
         web_results = str(docs)
 
     tool_call_entry = {
-        "tool": "web_search",
-        "input": question,
-        "output": web_results
+        "tool": "web_search"
     }
 
     return {
@@ -190,9 +178,7 @@ def financial_web_search(state):
         web_results = str(docs)
 
     tool_call_entry = {
-        "tool": "financial_web_search",
-        "input": question,
-        "output": web_results
+        "tool": "financial_web_search"
     }
 
     return {
@@ -206,9 +192,7 @@ def show_result(state):
     Final_answer = AIMessage(content=state["Intermediate_message"])
 
     tool_call_entry = {
-        "tool": "final_output",
-        "input": state.get("Intermediate_message"),
-        "output": Final_answer.content
+        "tool": "final_output"
     }
 
     print(f'SHOWING THE RESULTS: {Final_answer}')

@@ -7,7 +7,7 @@ import datetime
 # API endpoint
 url = "http://127.0.0.1:8000/ask"
 payload = {
-    "query": "What do you know about OPENAI and its founders?",
+    "query": "Upload MICROSOFT_CSV.pdf from local ",
 }
 
 # --- Formatter function ---
@@ -95,6 +95,35 @@ def format_graph_output(data: dict) -> str:
     
     return "\n".join(lines)
 
+def format_ingestion_output(data: dict) -> str:
+    """Format ingestion response into Markdown with clear logs."""
+    lines = []
+    answer_data = data.get("answer", {})
+
+    # Request
+    if "request" in answer_data:
+        lines.append("## Request")
+        lines.append(answer_data["request"])
+        lines.append("")
+
+    # Logs
+    if "logs" in answer_data:
+        lines.append("## Ingestion Logs")
+        for i, log in enumerate(answer_data["logs"], 1):
+            lines.append(f"{i}. {log}")
+        lines.append("")
+
+    # File info
+    lines.append("## File Information")
+    lines.append(f"- **Source:** {answer_data.get('source')}")
+    lines.append(f"- **File Name:** {answer_data.get('file_name')}")
+    lines.append(f"- **Space Key:** {answer_data.get('space_key')}")
+    lines.append(f"- **Ticket ID:** {answer_data.get('ticket_id')}")
+    lines.append(f"- **File URL:** {answer_data.get('file_url')}")
+    lines.append("")
+
+    return "\n".join(lines)
+
 # --- Main code ---
 response = requests.post(url, json=payload)
 
@@ -103,7 +132,10 @@ if response.status_code == 200:
     print(data)
     
     # Convert JSON into a clean report
-    content = format_graph_output(data)
+    if "logs" in data.get("answer", {}):
+        content = format_ingestion_output(data)
+    else:
+        content = format_graph_output(data)
     
     # Create folder if it doesn't exist
     folder = "responses"

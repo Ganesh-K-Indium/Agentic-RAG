@@ -7,6 +7,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from load_vector_dbs.load_dbs import load_vector_database
 from data_preparation.image_data_prep import ImageDescription
+from llama_parse import LlamaParse
+from dotenv import load_dotenv
 
 
 def process_pdf_and_stream(uploaded_pdf_path: str):
@@ -16,7 +18,6 @@ def process_pdf_and_stream(uploaded_pdf_path: str):
 
     try:
         yield f"Processing document: {uploaded_pdf_path}"
-        pdf_document = fitz.open(uploaded_pdf_path)
         source_file_name = os.path.basename(uploaded_pdf_path)
 
         embeddings = OpenAIEmbeddings()
@@ -26,33 +27,68 @@ def process_pdf_and_stream(uploaded_pdf_path: str):
         retriever, text_vectorstore, _ = db_init.get_text_retriever()
         existing_files = db_init.get_vector_store_files(text_vectorstore)
         print(f"Existing ingested files: {existing_files}")    
+
         if source_file_name in existing_files:
             yield f"{source_file_name} already ingested (text). Skipping text ingestion."
         else:
+            # -------------------------
+            # 1. Parse with LlamaParse
+            # -------------------------
+            load_dotenv()
+            api_key = os.getenv("LLAMA_PARSE_API_KEY")
+            if not api_key:
+                yield "❌ Missing LLAMA_PARSE_API_KEY in environment/.env"
+                return
+
+            parser = LlamaParse(api_key=api_key, result_type="markdown")
+            parsed_docs = parser.load_data(uploaded_pdf_path)
+
+            # Save parsed file for inspection
+            parsed_path = f"parsed_{os.path.splitext(source_file_name)[0]}.md"
+            with open(parsed_path, "w", encoding="utf-8") as f:
+                if isinstance(parsed_docs, list):
+                    for page in parsed_docs:
+                        f.write(page.text if hasattr(page, "text") else str(page))
+                        f.write("\n\n")
+                else:
+                    f.write(parsed_docs.text if hasattr(parsed_docs, "text") else str(parsed_docs))
+            yield f"Saved parsed text & tables to {parsed_path}"
+
+            # -------------------------
+            # 2. Convert into LangChain Documents
+            # -------------------------
             documents = []
-            for page_num, page in enumerate(pdf_document):
-                text = page.get_text("text")
+            if isinstance(parsed_docs, list):
+                for i, page in enumerate(parsed_docs):
+                    text = page.text if hasattr(page, "text") else str(page)
+                    if text.strip():
+                        documents.append(
+                            Document(page_content=text, metadata={"source_file": source_file_name, "page_num": i + 1})
+                        )
+            else:
+                text = parsed_docs.text if hasattr(parsed_docs, "text") else str(parsed_docs)
                 if text.strip():
-                    metadata = {"source_file": source_file_name,
-                                "page_num": page_num + 1}
-                    documents.append(Document(page_content=text, metadata=metadata))
+                    documents.append(
+                        Document(page_content=text, metadata={"source_file": source_file_name, "page_num": 1})
+                    )
 
             if documents:
-                yield "Extracted text and tables from PDF."
                 text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
                     chunk_size=1000, chunk_overlap=100
                 )
                 text_chunks = text_splitter.split_documents(documents)
 
-                # Generate deterministic UUIDs
+                # Deterministic UUIDs
                 ids = [
-                    str(uuid.uuid5(uuid.NAMESPACE_DNS,
-                                   f"{doc.metadata['source_file']}_page{doc.metadata['page_num']}_{i}"))
+                    str(uuid.uuid5(
+                        uuid.NAMESPACE_DNS,
+                        f"{doc.metadata['source_file']}_page{doc.metadata['page_num']}_{i}"
+                    ))
                     for i, doc in enumerate(text_chunks)
                 ]
 
                 text_vectorstore.add_documents(text_chunks, ids=ids)
-                yield f"Added text chunks from {source_file_name} into Qdrant text vector store."
+                yield f"Added text & table chunks from {source_file_name} into Qdrant text vector store."
             else:
                 yield "No text extracted from PDF."
 
@@ -74,12 +110,15 @@ def process_pdf_and_stream(uploaded_pdf_path: str):
                 yield f"Saved image metadata to {metadata_path}"
 
                 image_documents = img_processor.getRetriever(
-                    metadata_path, os.path.splitext(source_file_name)[0])
+                    metadata_path, os.path.splitext(source_file_name)[0]
+                )
 
-                # Generate deterministic UUIDs for images
+                # Deterministic UUIDs for images
                 img_ids = [
-                    str(uuid.uuid5(uuid.NAMESPACE_DNS,
-                                   f"{doc.metadata.get('company','NA')}_{source_file_name}_{i}"))
+                    str(uuid.uuid5(
+                        uuid.NAMESPACE_DNS,
+                        f"{doc.metadata.get('company','NA')}_{source_file_name}_{i}"
+                    ))
                     for i, doc in enumerate(image_documents)
                 ]
 
