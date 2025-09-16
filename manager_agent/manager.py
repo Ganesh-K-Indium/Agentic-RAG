@@ -7,12 +7,15 @@ from IngestionGraph.invoke_graph import IngestionGraph
 
 
 # ---------- Pydantic schema for ingestion commands ----------
+# ManagerAgent.py
 class IngestionCommand(BaseModel):
-    source: str  # "local_pdf", "confluence", "jira", "sharepoint"
-    file_name: Optional[str] = None   # for local PDF
-    space_key: Optional[str] = None   # for Confluence
-    ticket_id: Optional[str] = None   # for Jira
-    file_url: Optional[str] = None    # for SharePoint
+    source: str  # "local_pdf", "confluence", "jira", "sharepoint", "gdrive_folder"
+    file_name: Optional[str] = None
+    space_key: Optional[str] = None
+    ticket_id: Optional[str] = None
+    file_url: Optional[str] = None
+    folder_id: Optional[str] = None
+
 
 
 # ---------- Manager Agent ----------
@@ -59,7 +62,7 @@ class ManagerAgent:
         """
         Parse ingestion query into structured command with parameters.
         """
-        system_prompt = """
+        system_prompt =  """
         You are an assistant that extracts structured ingestion commands from user queries.
 
         Supported sources:
@@ -67,10 +70,12 @@ class ManagerAgent:
         - confluence (requires space_key)
         - jira (requires ticket_id)
         - sharepoint (requires file_url)
+        - gdrive_folder (requires folder_id)
 
         If some required info is missing, leave that field empty.
         Output must follow the IngestionCommand schema exactly.
         """
+
 
         structured_llm = self.llm.with_structured_output(IngestionCommand)
 

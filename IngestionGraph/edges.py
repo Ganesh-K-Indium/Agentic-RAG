@@ -1,9 +1,6 @@
 from .graph_state import IngestionState
 
 def route_ingestion(state: IngestionState) -> str:
-    """
-    Decide which ingestion node to route to based on `state.source`.
-    """
     source = state.get("source", "").lower()
 
     if source == "local_pdf":
@@ -14,11 +11,12 @@ def route_ingestion(state: IngestionState) -> str:
         return "jira"
     elif source == "sharepoint":
         return "sharepoint"
+    elif source == "gdrive_folder":
+        return "gdrive_folder"
     else:
-        return "error"  # a fallback node
+        return "error"
 
 def add_edges(workflow):
-    # Conditional routing from 'start' node
     workflow.add_conditional_edges(
         "start",
         route_ingestion,
@@ -27,6 +25,8 @@ def add_edges(workflow):
             "confluence": "confluence",
             "jira": "jira",
             "sharepoint": "sharepoint",
+            "gdrive_folder": "gdrive_folder",
             "error": "error",
         },
     )
+

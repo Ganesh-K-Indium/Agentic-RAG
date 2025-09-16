@@ -35,3 +35,11 @@ python-multipart
 
 
 qdrant-client
+
+llama_parse
+
+
+google-api-python-client 
+google-auth 
+google-auth-httplib2 
+google-auth-oauthlib

@@ -1,30 +1,25 @@
 # IngestionGraph/invoke_graph.py
 from langgraph.graph import StateGraph, END
 from .graph_state import IngestionState
-from .nodes import ingest_local_pdf, ingest_confluence, ingest_jira, ingest_sharepoint
+from .nodes import ingest_local_pdf, ingest_confluence, ingest_jira, ingest_sharepoint, ingest_gdrive_folder
 from .edges import route_ingestion
 
 
 class IngestionGraph:
     def __init__(self):
-        # Use the typed state for the ingestion graph
         self.workflow = StateGraph(IngestionState)
 
-        # --- start node (entrypoint) ---
-        # a simple passthrough node that ensures default fields exist
         self.workflow.add_node("start", self._start_node)
         self.workflow.set_entry_point("start")
 
-        # --- ingestion nodes ---
         self.workflow.add_node("local_pdf", ingest_local_pdf)
         self.workflow.add_node("confluence", ingest_confluence)
         self.workflow.add_node("jira", ingest_jira)
         self.workflow.add_node("sharepoint", ingest_sharepoint)
+        self.workflow.add_node("gdrive_folder", ingest_gdrive_folder)
 
-        # --- error/fallback node ---
         self.workflow.add_node("error", self._error_node)
 
-        # --- conditional routing from 'start' based on state ---
         self.workflow.add_conditional_edges(
             "start",
             route_ingestion,
@@ -33,18 +28,18 @@ class IngestionGraph:
                 "confluence": "confluence",
                 "jira": "jira",
                 "sharepoint": "sharepoint",
+                "gdrive_folder": "gdrive_folder",
                 "error": "error",
             },
         )
 
-        # --- connect all terminal nodes to END ---
         self.workflow.add_edge("local_pdf", END)
         self.workflow.add_edge("confluence", END)
         self.workflow.add_edge("jira", END)
         self.workflow.add_edge("sharepoint", END)
+        self.workflow.add_edge("gdrive_folder", END)
         self.workflow.add_edge("error", END)
 
-        # Compile (will validate that all referenced nodes exist)
         self.app = self.workflow.compile()
 
     # -------------------------
