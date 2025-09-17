@@ -2,7 +2,7 @@ import os
 from fastapi.responses import StreamingResponse
 from fastapi import UploadFile, File
 from .graph_state import IngestionState
-from IngestionGraph.utils.pdf_processor import process_pdf_and_stream  # assuming you moved process_pdf_and_stream to utils
+from IngestionGraph.utils.pdf_processor1 import process_pdf_and_stream  # assuming you moved process_pdf_and_stream to utils
 from IngestionGraph.utils.confluence import download_all_pdfs  # your confluence downloader
 from IngestionGraph.utils.gdrive import download_pdfs_from_folder
 from typing import Generator
