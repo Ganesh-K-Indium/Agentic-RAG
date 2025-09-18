@@ -5,6 +5,7 @@ from .graph_state import IngestionState
 from IngestionGraph.utils.pdf_processor1 import process_pdf_and_stream  # assuming you moved process_pdf_and_stream to utils
 from IngestionGraph.utils.confluence import download_all_pdfs  # your confluence downloader
 from IngestionGraph.utils.gdrive import download_pdfs_from_folder
+from IngestionGraph.utils.jira import download_attachments_from_project
 from typing import Generator
 
 # Local PDF ingestion node
@@ -83,11 +84,46 @@ def ingest_confluence(state: IngestionState):
     return state
 
 
-# Jira stub
 def ingest_jira(state: IngestionState):
-    ticket_id = state.get("ticket_id")
-    logs = state["logs"]
-    logs.append(f"[LOG] Pretending to ingest Jira ticket {ticket_id}")
+    logs = state.get("logs", [])
+    project_key = state.get("project_key")  # renamed field
+
+    if not project_key:
+        msg = "No project key provided for Jira ingestion."
+        print(msg)
+        logs.append(msg)
+        state["status"] = "error"
+        state["logs"] = logs
+        return state
+
+    msg = f"Fetching attachments from Jira project {project_key}..."
+    print(msg)
+    logs.append(msg)
+
+    pdf_files = download_attachments_from_project(project_key)
+
+    if not pdf_files:
+        msg = "No attachments found in the specified Jira project."
+        print(msg)
+        logs.append(msg)
+        state["status"] = "no_files"
+        state["logs"] = logs
+        return state
+
+    for pdf_path in pdf_files:
+        msg = f"Downloaded from Jira: {pdf_path}"
+        print(msg)
+        logs.append(msg)
+
+        for update in process_pdf_and_stream(pdf_path):
+            print(update)
+            logs.append(update)
+
+    msg = "Completed Jira ingestion."
+    print(msg)
+    logs.append(msg)
+
+    state["status"] = "success"
     state["logs"] = logs
     return state
 

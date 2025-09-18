@@ -12,7 +12,7 @@ class IngestionCommand(BaseModel):
     source: str  # "local_pdf", "confluence", "jira", "sharepoint", "gdrive_folder"
     file_name: Optional[str] = None
     space_key: Optional[str] = None
-    ticket_id: Optional[str] = None
+    project_key: Optional[str] = None  
     file_url: Optional[str] = None
     folder_id: Optional[str] = None
 
@@ -68,7 +68,7 @@ class ManagerAgent:
         Supported sources:
         - local_pdf (requires file_name)
         - confluence (requires space_key)
-        - jira (requires ticket_id)
+        - jira (requires project_key)
         - sharepoint (requires file_url)
         - gdrive_folder (requires folder_id)
 
