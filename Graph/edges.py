@@ -22,10 +22,78 @@ def route_question(state):
     question = messages[-1].content
     init = load_vector_database()
     _, vectorstore, _ = init.get_text_retriever()
-    vectorstore_source_files = init.get_vector_store_files(vectorstore)
-    print(vectorstore_source_files)
+
+    # Generate embedding for the question
+    query_embedding = init.embeddings.embed_query(question)
+
+    # Qdrant similarity search for top 5 text docs
+    text_results = init.qdrant_client.query_points(
+        collection_name=vectorstore.collection_name,
+        query=query_embedding,
+        limit=5,
+        with_payload=True
+    )
+
+    # Get image vector store
+    image_vectorstore, _, _ = init.get_image_retriever()
+    image_results = init.qdrant_client.query_points(
+        collection_name=image_vectorstore.collection_name,
+        query=query_embedding,
+        limit=5,
+        with_payload=True
+    )
+
+    # Extract file names or summaries from text payloads
+    top_text_docs = []
+    # Debug print the QueryResponse object
+    print(f"Text QueryResponse: {text_results}")
+    
+    # Extract results safely
+    text_points = []
+    if hasattr(text_results, 'result'):
+        text_points = text_results.result
+    print(f"Top text results from Qdrant (count: {len(text_points)}):")
+    
+    for idx, point in enumerate(text_points):
+        try:
+            if hasattr(point, 'payload'):
+                payload = point.payload
+                print(f"  [text result {idx}] payload: {payload}")
+                doc_name = payload.get("source_file", payload.get("summary", "Unknown"))
+                print(f"    extracted: {doc_name}")
+                top_text_docs.append(doc_name)
+        except Exception as e:
+            print(f"Error processing text result {idx}: {e}")
+            continue
+
+    top_image_docs = []
+    # Debug print the QueryResponse object
+    print(f"Image QueryResponse: {image_results}")
+    
+    # Extract results safely
+    image_points = []
+    if hasattr(image_results, 'result'):
+        image_points = image_results.result
+    print(f"Top image results from Qdrant (count: {len(image_points)}):")
+    
+    for idx, point in enumerate(image_points):
+        try:
+            if hasattr(point, 'payload'):
+                payload = point.payload
+                print(f"  [image result {idx}] payload: {payload}")
+                img_info = payload.get("caption", payload.get("company", payload.get("source_file", "Unknown")))
+                print(f"    extracted: {img_info}")
+                top_image_docs.append(img_info)
+        except Exception as e:
+            print(f"Error processing image result {idx}: {e}")
+            continue
+
+    # Combine both lists for routing context
+    combined_context = " ,".join(top_text_docs + top_image_docs)
+    print(f"Combined vectorstore context for router: {combined_context}")
+
     llm_router = ChatGroq(model="llama-3.3-70b-versatile")
-    question_router = get_question_router_chain(vectorstore_source_files, llm_router)
+    question_router = get_question_router_chain(combined_context, llm_router)
     source = question_router.invoke({"question": question})
     print(source)
     if source.datasource == "web_search":
@@ -117,45 +185,3 @@ def grade_generation_v_documents_and_question(state):
             state["retry_count"] = retry_count + 1
             return "not supported"
 
-    """
-    Determines whether the generation is grounded in the document and answers question.
-
-    Args:
-        state (dict): The current graph state
-
-    Returns:
-        str: Decision for next node to call
-    """
-
-    print("---CHECK HALLUCINATIONS---")
-    messages = state["messages"]
-    question = messages[-1].content
-    
-    documents = state["documents"]
-    
-    Intermediate_message = state["Intermediate_message"]
-    llm = ChatOpenAI(model="gpt-4o")
-    hallucination_grader = get_hallucination_chain(llm)
-    score = hallucination_grader.invoke(
-        {"documents": documents, "generation": Intermediate_message}
-    )
-    grade = score.binary_score
-
-    # Check hallucination
-    if grade.lower() == "yes":
-        print("---DECISION: GENERATION IS GROUNDED IN DOCUMENTS---")
-        # Check question-answering
-        print("---GRADE GENERATION vs QUESTION---")
-        print(f"Question: {question}, Answer {Intermediate_message}")
-        answer_grader = get_answer_quality_chain(llm)
-        answer_score = answer_grader.invoke({"question": question, "generation": Intermediate_message})
-        answer_grade = answer_score.binary_score
-        if answer_grade.lower() == "yes":
-            print("---DECISION: GENERATION ADDRESSES QUESTION---")
-            return "useful"
-        else:
-            print("---DECISION: GENERATION DOES NOT ADDRESS QUESTION---")
-            return "not useful"
-    else:
-        print("---DECISION: GENERATION IS NOT GROUNDED IN DOCUMENTS, RE-TRY---")
-        return "not supported"
