@@ -5,9 +5,13 @@ import os
 import datetime
 
 # API endpoint
-url = "http://127.0.0.1:8000/ask"
+url = "http://127.0.0.1:8001/ask"
+
+# payload = {
+#     "query": "Upload from Jira with project key TEST",
+# }
 payload = {
-    "query": "Upload MICROSOFT_CSV.pdf from local ",
+    "query": "For Meta In 2024, by how much did excess tax benefits recognized from share-based compensation decrease our provision for income taxes?",
 }
 
 # --- Formatter function ---
