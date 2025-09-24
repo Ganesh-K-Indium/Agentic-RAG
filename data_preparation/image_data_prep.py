@@ -116,15 +116,86 @@ class ImageDescription:
 
     def analyze_image_with_context(self,image_path, context_text):
         """
-        This method is used to get the description of the image
+        Analyzes financial document images and extracts structured data.
         Args:
-            image_path : The path of the image
-            context_text: Preceding Text
+            image_path: Path to the image file
+            context_text: Surrounding text context
+        Returns:
+            str: JSON formatted analysis or error message
         """
+        if not os.path.exists(image_path):
+            return json.dumps({"error": "File not found", "path": image_path})
+            
         openai.api_key = os.getenv("OPENAI_API_KEY")
-        image_base64 = self.encode_image(image_path)
+        if not openai.api_key:
+            return json.dumps({"error": "API key missing"})
+            
+        try:
+            image_base64 = self.encode_image(image_path)
+            
+            prompt = f"""
+            Analyze this financial image with context: {context_text}
+
+            Required JSON format:
+            {{
+                "title": "Brief, accurate title",
+                "type": "chart/table/graph/diagram/logo",
+                "data": {{
+                    "dates": ["All dates/periods"],
+                    "values": ["All numbers with units"],
+                    "percentages": ["All % changes"],
+                    "trends": ["Trends with numbers"]
+                }},
+                "analysis": {{
+                    "main_point": "Key finding",
+                    "details": ["Specific insights with numbers"],
+                    "significance": "high/medium/low"
+                }}
+            }}
+
+            For logos/signatures: {{"type": "INVALID"}}
+
+            Extract ALL numbers, dates, and trends exactly as shown.
+            Include specific values for all trends and changes.
+            """
+
+            response = openai.chat.completions.create(
+                model="gpt-4-vision-preview",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a financial data extraction expert. Extract ALL numerical data precisely."
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}}
+                        ]
+                    }
+                ],
+                max_tokens=500
+            )
+            
+            result = response.choices[0].message.content
+            
+            # Validate JSON response
+            try:
+                json.loads(result)
+                return result
+            except json.JSONDecodeError:
+                return json.dumps({
+                    "error": "Invalid response",
+                    "raw_content": result
+                })
+                
+        except Exception as e:
+            return json.dumps({
+                "error": "Processing failed",
+                "message": str(e)
+            })
         
-        prompt = f"""
+        '''prompt = f"""
         ## **Context-Aware Financial Image Analysis**
 
         **Task:**  
@@ -163,7 +234,7 @@ class ImageDescription:
             max_tokens=500
         )
         
-        return response.choices[0].message.content
+        return response.choices[0].message.content'''
     
     
     def get_image_description(self,contexts):
