@@ -3,7 +3,8 @@
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic_models.models import (RouteQuery, GradeDocuments, 
-                                        GradeHallucinations, ExtractCompany,GradeAnswer)
+                                        GradeHallucinations, ExtractCompany, GradeAnswer,
+                                        CrossReferenceAnalysis, DocumentSummaryStrategy)
 
 
 def get_question_router_chain(vectorstore_source_files, llm_router):
@@ -44,18 +45,24 @@ def get_retrival_grader_chain(llm_grade_document):
 
     SYSTEM_PROMPT_GRADE = """You are a grader assessing the relevance of a retrieved document to a user question.  
 
+        **Assessment Guidelines:**
         - If the document **explicitly** contains **keywords** or **semantic meaning** related to the user question, it is **highly relevant**.  
-        - If it contains **partial information** but lacks some context, it is **moderately relevant**.  
-        - If it does not contain relevant information, it is **not relevant**.  
+        - If it contains **partial information** that could contribute to answering the question, it is **moderately relevant**.  
+        - For **multi-company questions** (e.g., "Compare Tesla and Amazon"), accept documents from ANY mentioned company
+        - For **financial questions**, be generous with financial documents even if company names don't exactly match
+        - Only mark as **not relevant** if it contains no useful information for the question.
 
-        ### **Special Case if document started with "This is an image with the caption:":**
-        - If the document starts with **"This is an image with the caption:"**, then give **extra priority** to the document.
-        - Read the **entire document carefully** to see if **any keywords** related to the user's query appear.
-        - Ignore the company name like jp morgon, pfizer, google etc in the question and then decide whether the document is relevant or not. 
+        **Special Handling Cases:**
+        - **Image documents** starting with "This is an image with the caption:" get **extra consideration**
+        - **Company name flexibility**: "Meta" = "Facebook", "Google" = "Alphabet", etc.
+        - **Cross-referencing scenarios**: Documents from related companies or industry context are valuable
+        - **Financial data**: Balance sheets, income statements, cash flows are relevant for financial questions
 
-        ### **Scoring System:**
-        - **Return "Yes" ** if the document is a strong match or even if the document is partially relevant.  
-        - **Return "No" ** if it is not relevant at all.  
+        **Scoring System:**
+        - **Return "Yes"** if the document is a strong match, partial match, or provides useful context
+        - **Return "Yes"** for financial documents when the question involves financial metrics
+        - **Return "Yes"** for image documents with relevant captions or visual data  
+        - **Return "No"** only if the document is completely unrelated to the question topic
         """
 
     grade_prompt = ChatPromptTemplate.from_messages(
@@ -112,8 +119,17 @@ def get_rag_chain(llm_generate):
 def get_hallucination_chain(llm_grade_hallucination):
     llm_hallucination_grader = llm_grade_hallucination.with_structured_output(GradeHallucinations)
 
-    SYSTEM_PROMPT_GRADE_HALLUCINATION = """You are a grader assessing whether an LLM generation is grounded in / supported by a set of retrieved facts. \n 
-        Give a binary score 'yes' or 'no'. 'Yes' means that the answer is grounded in / supported by the set of facts."""
+    SYSTEM_PROMPT_GRADE_HALLUCINATION = """You are a grader assessing whether an LLM generation is grounded in / supported by a set of retrieved facts. 
+
+    **Key Guidelines:**
+    - Give 'yes' if the generation's main claims are supported by the documents
+    - For cross-referencing answers with multiple companies, accept if core facts from each company are grounded
+    - The generation doesn't need to use ALL documents, just needs major claims to be supported
+    - If the generation includes proper citations matching the documents, give 'yes'
+    - For comparative analysis, accept if the comparison is based on data found in the documents
+    - Give 'no' only if the generation makes significant unsupported claims
+    
+    Give a binary score 'yes' or 'no'. 'Yes' means that the answer is grounded in / supported by the set of facts."""
 
     hallucination_prompt = ChatPromptTemplate.from_messages(
         [
@@ -208,3 +224,80 @@ def get_question_rewriter_chain(llm):
 
     question_rewriter = re_write_prompt | llm | StrOutputParser()
     return question_rewriter
+
+def get_cross_reference_analyzer_chain(llm):
+    """Simplified cross-reference analyzer for compatibility."""
+    from pydantic_models.models import CrossReferenceAnalysis
+    structured_llm = llm.with_structured_output(CrossReferenceAnalysis)
+
+    SYSTEM_PROMPT = """Analyze if a question needs cross-referencing multiple sources.
+    
+    Cross-referencing is needed for:
+    - Multi-company questions: "Compare Tesla and Amazon"
+    - Industry analysis: "EV market trends"
+    - Questions requiring multiple data sources for validation
+    
+    Not needed for:
+    - Single company queries: "Tesla's revenue"
+    - Simple factual questions: "Company CEO"
+    """
+
+    cross_ref_prompt = ChatPromptTemplate.from_messages([
+        ("system", SYSTEM_PROMPT),
+        ("human", "Question: {question}\n\nDoes this need cross-referencing?")
+    ])
+
+    return cross_ref_prompt | structured_llm
+
+def get_document_summary_strategy_chain(llm):
+    """Simplified document summary strategy for compatibility."""
+    from pydantic_models.models import DocumentSummaryStrategy
+    structured_llm = llm.with_structured_output(DocumentSummaryStrategy)
+
+    SYSTEM_PROMPT = """Determine summarization strategy:
+    - single_source: Same company/type documents
+    - multi_source_vectorstore: Multiple companies from vectorstore
+    - integrated_vectorstore_web: Vectorstore + web results
+    - comprehensive_cross_reference: Complex multi-source synthesis
+    """
+
+    strategy_prompt = ChatPromptTemplate.from_messages([
+        ("system", SYSTEM_PROMPT),
+        ("human", "Question: {question}\nSources: {document_sources}\n\nStrategy:")
+    ])
+
+    return strategy_prompt | structured_llm
+
+def get_enhanced_rag_chain_with_citations(llm_generate):
+    """Enhanced RAG chain with cross-referencing and citations."""
+    
+    prompt = """You are an AI assistant that provides comprehensive answers with proper citations.
+
+    **Instructions:**
+    1. Use ALL available sources - don't ignore any relevant information
+    2. For multi-company questions, extract data from ALL mentioned companies
+    3. Always cite sources: [Source Type: Description]
+    4. For comparisons, present data in structured format
+    5. Include specific financial figures when available
+    6. Mention the reporting period for financial data
+
+    **Structure your response:**
+    - Main Answer with citations
+    - Supporting Evidence from multiple sources
+    - Source Summary
+    """
+
+    enhanced_rag_prompt = ChatPromptTemplate.from_messages([
+        ("system", prompt),
+        ("human", """Question: {question}
+
+Document Sources: {document_sources}
+
+Strategy: {summary_strategy}
+
+Analysis: {cross_reference_analysis}
+
+Provide comprehensive answer with citations.""")
+    ])
+
+    return enhanced_rag_prompt | llm_generate | StrOutputParser()

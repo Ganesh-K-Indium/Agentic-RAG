@@ -15,6 +15,10 @@ class GraphState(TypedDict):
         web_searched: whether web search has been conducted
         vectorstore_quality: quality score of vectorstore results
         needs_web_fallback: whether web search is needed as fallback
+        cross_reference_analysis: analysis of cross-referencing needs
+        document_sources: categorized document sources for citation
+        citation_info: citation information for all sources
+        summary_strategy: strategy for document summarization
     """
     messages: Annotated[Sequence[BaseMessage], add_messages]
     Intermediate_message: str
@@ -24,5 +28,9 @@ class GraphState(TypedDict):
     vectorstore_searched: bool
     web_searched: bool
     vectorstore_quality: str  # "good", "poor", "none"
-    needs_web_fallback: bool 
+    needs_web_fallback: bool
+    cross_reference_analysis: Dict[str, Any]
+    document_sources: Dict[str, List[Any]]  # categorized by source type
+    citation_info: List[Dict[str, Any]]
+    summary_strategy: str 
     

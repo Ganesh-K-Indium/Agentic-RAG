@@ -116,6 +116,7 @@ def decide_to_generate(state):
 def grade_generation_v_documents_and_question(state):
     """
     Determines whether the generation is grounded in the document and answers question.
+    Enhanced for cross-referencing scenarios.
 
     Args:
         state (dict): The current graph state
@@ -129,7 +130,9 @@ def grade_generation_v_documents_and_question(state):
     question = messages[-1].content
     
     documents = state["documents"]
+    document_sources = state.get("document_sources", {})
     Intermediate_message = state["Intermediate_message"]
+    cross_ref_analysis = state.get("cross_reference_analysis", {})
 
     #  Track retry count in state
     retry_count = state.get("retry_count", 0)
@@ -137,8 +140,20 @@ def grade_generation_v_documents_and_question(state):
 
     llm = ChatOpenAI(model="gpt-4o")
     hallucination_grader = get_hallucination_chain(llm)
+    
+    # For cross-referencing, use document_sources if available, otherwise fall back to documents
+    docs_for_grading = documents
+    if cross_ref_analysis.get("needs_cross_reference") == "yes" and document_sources:
+        # Combine all document sources for grading
+        all_docs_for_grading = []
+        for source_type, source_docs in document_sources.items():
+            if source_docs:
+                all_docs_for_grading.extend(source_docs)
+        if all_docs_for_grading:
+            docs_for_grading = all_docs_for_grading
+    
     score = hallucination_grader.invoke(
-        {"documents": documents, "generation": Intermediate_message}
+        {"documents": docs_for_grading, "generation": Intermediate_message}
     )
     grade = score.binary_score
 
@@ -160,11 +175,15 @@ def grade_generation_v_documents_and_question(state):
             print("---DECISION: GENERATION DOES NOT ADDRESS QUESTION---")
             return "not useful"
     else:
-        if retry_count >= max_retries:
+        # For cross-referencing scenarios, be more lenient on retries
+        is_cross_ref = cross_ref_analysis.get("needs_cross_reference") == "yes"
+        adjusted_max_retries = max_retries + 1 if is_cross_ref else max_retries
+        
+        if retry_count >= adjusted_max_retries:
             print(f"---MAX RETRIES REACHED ({retry_count}), stopping loop---")
             return "useful"  # fallback → treat as final result instead of looping forever
         else:
-            print(f"---DECISION: GENERATION IS NOT GROUNDED, RETRY {retry_count + 1}/{max_retries}---")
+            print(f"---DECISION: GENERATION IS NOT GROUNDED, RETRY {retry_count + 1}/{adjusted_max_retries}---")
             # Increment retry count in state
             state["retry_count"] = retry_count + 1
             return "not supported"
@@ -189,4 +208,47 @@ def decide_after_web_integration(state):
     else:
         print("---DECISION: NO DOCUMENTS AFTER WEB INTEGRATION, FALLBACK TO FINANCIAL WEB SEARCH---")
         return "financial_web_search"
+
+
+def decide_cross_reference_approach(state):
+    """
+    Decides whether to use cross-referencing and citation approach based on question complexity.
+    
+    Args:
+        state (dict): The current graph state
+        
+    Returns:
+        str: Next node to call
+    """
+    print("---DECIDE CROSS-REFERENCE APPROACH---")
+    documents = state.get("documents", [])
+    
+    # Check if we have multiple document types that might benefit from cross-referencing
+    if len(documents) >= 2:
+        print("---DECISION: MULTIPLE DOCUMENTS AVAILABLE, ANALYZE CROSS-REFERENCE NEEDS---")
+        return "analyze_cross_reference"
+    else:
+        print("---DECISION: LIMITED DOCUMENTS, USE STANDARD GENERATION---")
+        return "generate"
+
+
+def decide_after_cross_reference_analysis(state):
+    """
+    Decides next step after cross-reference analysis.
+    
+    Args:
+        state (dict): The current graph state
+        
+    Returns:
+        str: Next node to call
+    """
+    print("---DECIDE AFTER CROSS-REFERENCE ANALYSIS---")
+    cross_ref_analysis = state.get("cross_reference_analysis", {})
+    
+    if cross_ref_analysis.get("needs_cross_reference") == "yes":
+        print("---DECISION: CROSS-REFERENCING NEEDED, CATEGORIZE DOCUMENTS AND DETERMINE STRATEGY---")
+        return "categorize_documents"
+    else:
+        print("---DECISION: NO CROSS-REFERENCING NEEDED, USE STANDARD GENERATION---")
+        return "generate"
 

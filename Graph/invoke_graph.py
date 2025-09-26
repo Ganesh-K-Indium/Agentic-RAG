@@ -6,10 +6,13 @@ from Graph.graph_state import GraphState
 from Graph.nodes import (retrieve_from_images_data, web_search, retrieve,
                          grade_documents, generate, transform_query,
                          financial_web_search, show_result, integrate_web_search,
-                         evaluate_vectorstore_quality)
+                         evaluate_vectorstore_quality, analyze_cross_reference_needs,
+                         determine_summary_strategy, categorize_documents_by_source,
+                         generate_with_cross_reference_and_citations)
 from Graph.edges import (route_question, decide_to_generate,
                          grade_generation_v_documents_and_question,
-                         decide_after_web_integration)
+                         decide_after_web_integration, decide_cross_reference_approach,
+                         decide_after_cross_reference_analysis)
 load_dotenv()
 os.environ["GROQ_API_KEY"]=os.getenv("GROQ_API_KEY")
 os.environ["TAVILY_API_KEY"]=os.getenv("TAVILY_API_KEY")
@@ -36,6 +39,10 @@ class BuildingGraph:
         workflow.add_node("show_result", show_result)
         workflow.add_node("integrate_web_search", integrate_web_search)
         workflow.add_node("evaluate_vectorstore_quality", evaluate_vectorstore_quality)
+        workflow.add_node("analyze_cross_reference", analyze_cross_reference_needs)
+        workflow.add_node("determine_strategy", determine_summary_strategy)
+        workflow.add_node("categorize_documents", categorize_documents_by_source)
+        workflow.add_node("generate_with_citations", generate_with_cross_reference_and_citations)
 
         workflow.add_conditional_edges(
             START,
@@ -57,7 +64,7 @@ class BuildingGraph:
             decide_to_generate,
             {
                 "financial_web_search": "financial_web_search",
-                "generate": "generate",
+                "generate": "analyze_cross_reference",  # First analyze if cross-referencing is needed
                 "integrate_web_search": "integrate_web_search",
             },
         )
@@ -72,6 +79,19 @@ class BuildingGraph:
             },
         )
 
+        # Cross-referencing workflow edges
+        workflow.add_conditional_edges(
+            "analyze_cross_reference",
+            decide_after_cross_reference_analysis,
+            {
+                "categorize_documents": "categorize_documents",
+                "generate": "generate",
+            },
+        )
+
+        workflow.add_edge("categorize_documents", "determine_strategy")
+        workflow.add_edge("determine_strategy", "generate_with_citations")
+
         workflow.add_edge("financial_web_search", "generate")
         workflow.add_edge("transform_query", "retrieve")
 
@@ -80,6 +100,17 @@ class BuildingGraph:
             grade_generation_v_documents_and_question,
             {
                 "not supported": "generate",
+                "useful": "show_result",
+                "not useful": "transform_query",
+            },
+        )
+
+        # Add similar grading for enhanced generation with citations
+        workflow.add_conditional_edges(
+            "generate_with_citations",
+            grade_generation_v_documents_and_question,
+            {
+                "not supported": "generate_with_citations",
                 "useful": "show_result",
                 "not useful": "transform_query",
             },
@@ -94,8 +125,18 @@ class BuildingGraph:
 if __name__ == '__main__':
     
     inputs = {
-    "messages": ["""tell me about the distribution of discovery projects across various 
-                 phases of the R&D pipeline along with the timeline and number of projects for pfizer?"""]
+        "messages": ["""tell me about the distribution of discovery projects across various 
+                     phases of the R&D pipeline along with the timeline and number of projects for pfizer?"""],
+        "vectorstore_searched": False,
+        "web_searched": False,
+        "vectorstore_quality": "none",
+        "needs_web_fallback": False,
+        "retry_count": 0,
+        "tool_calls": [],
+        "cross_reference_analysis": {},
+        "document_sources": {},
+        "citation_info": [],
+        "summary_strategy": "single_source"
     }
     graph_obj = BuildingGraph()
     agent = graph_obj.get_graph()
