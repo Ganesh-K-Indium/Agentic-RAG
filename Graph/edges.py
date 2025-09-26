@@ -8,7 +8,7 @@ from load_vector_dbs.load_dbs import load_vector_database
 
 def route_question(state):
     """
-    Route question to web search or RAG.
+    Route question using integrated approach - prefer vectorstore but prepare for web integration.
 
     Args:
         state (dict): The current graph state
@@ -17,7 +17,7 @@ def route_question(state):
         str: Next node to call
     """
 
-    print("---ROUTE QUESTION---")
+    print("---ROUTE QUESTION WITH INTEGRATED APPROACH---")
     messages = state["messages"]
     question = messages[-1].content
     init = load_vector_database()
@@ -43,91 +43,75 @@ def route_question(state):
         with_payload=True
     )
 
-    # Extract file names or summaries from text payloads
-    top_text_docs = []
-    # Debug print the QueryResponse object
-    print(f"Text QueryResponse: {text_results}")
+    # Calculate relevance scores
+    text_relevance_score = 0
+    image_relevance_score = 0
     
-    # Extract results safely
+    # Extract results safely and calculate scores
     text_points = []
     if hasattr(text_results, 'result'):
         text_points = text_results.result
-    print(f"Top text results from Qdrant (count: {len(text_points)}):")
+        text_relevance_score = sum(point.score for point in text_points if hasattr(point, 'score'))
     
-    for idx, point in enumerate(text_points):
-        try:
-            if hasattr(point, 'payload'):
-                payload = point.payload
-                print(f"  [text result {idx}] payload: {payload}")
-                doc_name = payload.get("source_file", payload.get("summary", "Unknown"))
-                print(f"    extracted: {doc_name}")
-                top_text_docs.append(doc_name)
-        except Exception as e:
-            print(f"Error processing text result {idx}: {e}")
-            continue
-
-    top_image_docs = []
-    # Debug print the QueryResponse object
-    print(f"Image QueryResponse: {image_results}")
-    
-    # Extract results safely
     image_points = []
     if hasattr(image_results, 'result'):
         image_points = image_results.result
-    print(f"Top image results from Qdrant (count: {len(image_points)}):")
-    
-    for idx, point in enumerate(image_points):
-        try:
-            if hasattr(point, 'payload'):
-                payload = point.payload
-                print(f"  [image result {idx}] payload: {payload}")
-                img_info = payload.get("caption", payload.get("company", payload.get("source_file", "Unknown")))
-                print(f"    extracted: {img_info}")
-                top_image_docs.append(img_info)
-        except Exception as e:
-            print(f"Error processing image result {idx}: {e}")
-            continue
+        image_relevance_score = sum(point.score for point in image_points if hasattr(point, 'score'))
 
-    # Combine both lists for routing context
-    combined_context = " ,".join(top_text_docs + top_image_docs)
-    print(f"Combined vectorstore context for router: {combined_context}")
+    total_relevance = text_relevance_score + image_relevance_score
+    vectorstore_confidence = len(text_points) + len(image_points)
 
-    llm_router = ChatGroq(model="llama-3.3-70b-versatile")
-    question_router = get_question_router_chain(combined_context, llm_router)
-    source = question_router.invoke({"question": question})
-    print(source)
-    if source.datasource == "web_search":
-        print("---ROUTE QUESTION TO WEB SEARCH---")
-        return "web_search"
-    elif source.datasource == "vectorstore":
-        print("---ROUTE QUESTION TO RAG---")
+    print(f"Vectorstore relevance score: {total_relevance}, confidence: {vectorstore_confidence}")
+
+    # Enhanced routing logic
+    if vectorstore_confidence >= 3 and total_relevance > 0.7:
+        print("---ROUTE: HIGH CONFIDENCE VECTORSTORE SEARCH---")
         return "vectorstore"
+    elif vectorstore_confidence >= 1 and total_relevance > 0.5:
+        print("---ROUTE: MODERATE CONFIDENCE VECTORSTORE SEARCH (may need web supplement)---")
+        return "vectorstore"
+    else:
+        # Check if it's clearly a web-only query
+        web_indicators = ["current", "latest", "recent", "news", "today", "this year", "2024", "2025"]
+        if any(indicator in question.lower() for indicator in web_indicators):
+            print("---ROUTE: WEB SEARCH (temporal/current info needed)---")
+            return "web_search"
+        else:
+            print("---ROUTE: TRY VECTORSTORE FIRST (low confidence, may need web integration)---")
+            return "vectorstore"
     
 def decide_to_generate(state):
     """
-    Determines whether to generate an answer, or re-generate a question.
+    Determines whether to generate an answer, add web search, or re-generate a question.
 
     Args:
         state (dict): The current graph state
 
     Returns:
-        str: Binary decision for next node to call
+        str: Decision for next node to call
     """
 
     print("---ASSESS GRADED DOCUMENTS---")
     filtered_documents = state["documents"]
+    vectorstore_searched = state.get("vectorstore_searched", False)
+    web_searched = state.get("web_searched", False)
 
     if not filtered_documents:
         # All documents have been filtered check_relevance
-        # We will re-generate a new query
-        print(
-            "---DECISION: ALL DOCUMENTS ARE NOT RELEVANT TO QUESTION, SEARCHING OVER THE INTERNET---"
-        )
-        return "financial_web_search"
+        if not web_searched and vectorstore_searched:
+            print("---DECISION: NO RELEVANT VECTORSTORE DOCS, TRY WEB SEARCH---")
+            return "integrate_web_search"
+        else:
+            print("---DECISION: NO RELEVANT DOCS AFTER ALL SEARCHES, FALLBACK TO FINANCIAL WEB SEARCH---")
+            return "financial_web_search"
     else:
-        # We have relevant documents, so generate answer
-        print("---DECISION: GENERATE---")
-        return "generate"
+        # We have relevant documents, check if we need web supplement
+        if vectorstore_searched and not web_searched and len(filtered_documents) < 3:
+            print("---DECISION: LIMITED VECTORSTORE RESULTS, SUPPLEMENT WITH WEB SEARCH---")
+            return "integrate_web_search"
+        else:
+            print("---DECISION: SUFFICIENT DOCUMENTS, GENERATE ANSWER---")
+            return "generate"
     
 def grade_generation_v_documents_and_question(state):
     """
@@ -184,4 +168,25 @@ def grade_generation_v_documents_and_question(state):
             # Increment retry count in state
             state["retry_count"] = retry_count + 1
             return "not supported"
+
+
+def decide_after_web_integration(state):
+    """
+    Decides next step after web search integration.
+    
+    Args:
+        state (dict): The current graph state
+        
+    Returns:
+        str: Next node to call
+    """
+    print("---DECIDE AFTER WEB INTEGRATION---")
+    documents = state.get("documents", [])
+    
+    if documents:
+        print("---DECISION: DOCUMENTS AVAILABLE AFTER WEB INTEGRATION, GRADE THEM---")
+        return "grade_documents"
+    else:
+        print("---DECISION: NO DOCUMENTS AFTER WEB INTEGRATION, FALLBACK TO FINANCIAL WEB SEARCH---")
+        return "financial_web_search"
 

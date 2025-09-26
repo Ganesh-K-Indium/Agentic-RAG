@@ -25,6 +25,7 @@ def retrieve(state):
     print(f"DOCUMENTS RETRIEVED AND NUMBER OF DOCUMENTS ARE {len(documents)}")
     return {
         "documents": documents,
+        "vectorstore_searched": True,
         "tool_calls": state.get("tool_calls", []) + [tool_call_entry]
     }
 
@@ -157,6 +158,7 @@ def web_search(state):
 
     return {
         "documents": [Document(page_content=web_results)],
+        "web_searched": True,
         "tool_calls": state.get("tool_calls", []) + [tool_call_entry]
     }
 
@@ -183,6 +185,79 @@ def financial_web_search(state):
 
     return {
         "documents": [Document(page_content=web_results)],
+        "tool_calls": state.get("tool_calls", []) + [tool_call_entry]
+    }
+
+
+def integrate_web_search(state):
+    """
+    Perform web search to supplement vectorstore results when they are insufficient.
+    """
+    print("---INTEGRATE WEB SEARCH---")
+    messages = state["messages"]
+    question = messages[-1].content
+    existing_documents = state.get("documents", [])
+
+    web_search_tool = TavilySearch(k=3)
+    docs = web_search_tool.invoke({"query": question})
+
+    if isinstance(docs, list):
+        web_results = "\n".join(
+            d.get("content", "") if isinstance(d, dict) else str(d)
+            for d in docs
+        )
+    else:
+        web_results = str(docs)
+
+    # Add web results to existing documents
+    web_doc = Document(page_content=web_results)
+    combined_documents = existing_documents + [web_doc]
+
+    tool_call_entry = {
+        "tool": "integrate_web_search"
+    }
+
+    print(f"INTEGRATED WEB SEARCH RESULTS WITH {len(existing_documents)} EXISTING DOCS")
+    return {
+        "documents": combined_documents,
+        "web_searched": True,
+        "tool_calls": state.get("tool_calls", []) + [tool_call_entry]
+    }
+
+
+def evaluate_vectorstore_quality(state):
+    """
+    Evaluate the quality of vectorstore results to determine if web search is needed.
+    """
+    print("---EVALUATE VECTORSTORE QUALITY---")
+    messages = state["messages"]
+    question = messages[-1].content
+    documents = state.get("documents", [])
+
+    # Simple heuristics to evaluate vectorstore quality
+    quality = "none"
+    needs_web_fallback = True
+
+    if documents:
+        # Check if we have sufficient relevant documents
+        if len(documents) >= 2:
+            quality = "good"
+            needs_web_fallback = False
+        elif len(documents) == 1:
+            quality = "poor"
+            needs_web_fallback = True
+        else:
+            quality = "none"
+            needs_web_fallback = True
+    
+    tool_call_entry = {
+        "tool": "evaluate_vectorstore_quality"
+    }
+
+    print(f"VECTORSTORE QUALITY: {quality}, NEEDS WEB FALLBACK: {needs_web_fallback}")
+    return {
+        "vectorstore_quality": quality,
+        "needs_web_fallback": needs_web_fallback,
         "tool_calls": state.get("tool_calls", []) + [tool_call_entry]
     }
 

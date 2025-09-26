@@ -9,9 +9,27 @@ from pydantic_models.models import (RouteQuery, GradeDocuments,
 def get_question_router_chain(vectorstore_source_files, llm_router):
     structured_llm_router = llm_router.with_structured_output(RouteQuery)
 
-    SYSTEM_PROMPT = f"""You are an expert at routing a user question to a vectorstore or web search. The vectorstore contains documents related to the 10k-financial report file of {vectorstore_source_files}.
-    Use the vectorstore for questions on these topics. Otherwise, use web-search."""
-    print(SYSTEM_PROMPT)
+    SYSTEM_PROMPT = f"""You are an expert at routing user questions in an integrated search system.
+    
+    **Vectorstore Contents**: The vectorstore contains financial documents, 10-K reports, and visual data for companies: {vectorstore_source_files}.
+    
+    **Routing Guidelines**:
+    - **Choose "vectorstore"** for:
+      - Financial performance questions (revenue, profits, expenses)
+      - Company-specific historical data
+      - Questions about business segments, products, services
+      - Regulatory or compliance information
+      - Questions that can be answered from annual reports or financial statements
+      
+    - **Choose "web_search"** for:
+      - Current events, recent news
+      - Real-time market data, stock prices
+      - Questions explicitly asking for "latest", "current", "recent", "today"
+      - Information likely to change frequently
+      - Topics not covered in financial reports
+    
+    **Note**: The system can combine both sources when needed, so prefer vectorstore for financial/company questions even if some web context might help."""
+    
     route_prompt = ChatPromptTemplate.from_messages(
         [
             ("system", SYSTEM_PROMPT),
@@ -51,23 +69,41 @@ def get_retrival_grader_chain(llm_grade_document):
     return retrieval_grader
 
 def get_rag_chain(llm_generate):
-    prompt = """### Task:You are an AI assistant integrated into a Retrieval-Augmented Generation (RAG) system. When a user asks a question, you must generate a relevant answer. Additionally, you should suggest alternative or follow-up questions the user may ask based on the context of their original question and relavant Context.
+    prompt = """### Task: You are an AI assistant integrated into an advanced Retrieval-Augmented Generation (RAG) system that combines vectorstore and web search results. When a user asks a question, you must generate a comprehensive and accurate answer using all available sources.
 
                 ### Instructions:
-                1. **Answer the User's Question**: Retrieve the most relevant information from the knowledge base and generate a clear and concise response.
-                2. **Generate Suggested Questions**:
-                - Provide 3 to 5 related questions that the user might find useful.
-                - Ensure the suggestions are contextually relevant and expand on the topic.
-                - Avoid redundant or overly generic questions.
-                3. **Formatting**:
-                - Present the answer first.
-                - List the suggested questions under a "Related Questions" section.
-                - Format the response in a user-friendly and readable manner.
+                1. **Analyze All Sources**: You may receive information from:
+                   - Company financial documents (10-K reports, financial statements)
+                   - Image captions and visual data
+                   - Current web search results
+                   - Mixed document types
+                
+                2. **Answer the User's Question**: 
+                   - Prioritize the most relevant and recent information
+                   - If you have both historical (vectorstore) and current (web) data, mention both and highlight any differences
+                   - Be explicit about your sources when they provide conflicting information
+                   - Generate a clear, comprehensive, and well-structured response
+                
+                3. **Handle Source Integration**:
+                   - If information comes from financial documents, mention the company and context
+                   - If information comes from web search, indicate it's current/recent data
+                   - Synthesize information from multiple sources coherently
+                
+                4. **Generate Suggested Questions**:
+                   - Provide 3 to 5 related questions that the user might find useful
+                   - Ensure suggestions are contextually relevant and expand on the topic
+                   - Include both specific follow-ups and broader related topics
+                
+                5. **Formatting**:
+                   - Present the comprehensive answer first
+                   - Clearly indicate when information comes from different time periods or sources
+                   - List the suggested questions under a "Related Questions" section
+                   - Format the response in a user-friendly and readable manner
                 """
     RAG_Prompt = ChatPromptTemplate.from_messages(
         [
             ("system", prompt),
-            ("human", "Relavant Context: \n\n {documents} \n\n Question: {question} \n\nAnswer:"),
+            ("human", "Relevant Context from Multiple Sources: \n\n {documents} \n\n Question: {question} \n\nAnswer:"),
         ]
     )
     rag_chain = RAG_Prompt | llm_generate | StrOutputParser()
@@ -93,7 +129,7 @@ def get_hallucination_chain(llm_grade_hallucination):
 def get_company_name(llm):
     llm_company_extractor = llm.with_structured_output(ExtractCompany)
 
-    SYSTEM_PROMPT = """you are an expert who can identify the comapny name from the given user question 
+    SYSTEM_PROMPT = """you are an expert who can identify the company name from the given user question 
     and map it to one of the below company. 
     1. amazon
     2. berkshire

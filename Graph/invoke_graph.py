@@ -5,9 +5,11 @@ from langgraph.graph import StateGraph, START, END
 from Graph.graph_state import GraphState
 from Graph.nodes import (retrieve_from_images_data, web_search, retrieve,
                          grade_documents, generate, transform_query,
-                         financial_web_search, show_result)
+                         financial_web_search, show_result, integrate_web_search,
+                         evaluate_vectorstore_quality)
 from Graph.edges import (route_question, decide_to_generate,
-                         grade_generation_v_documents_and_question)
+                         grade_generation_v_documents_and_question,
+                         decide_after_web_integration)
 load_dotenv()
 os.environ["GROQ_API_KEY"]=os.getenv("GROQ_API_KEY")
 os.environ["TAVILY_API_KEY"]=os.getenv("TAVILY_API_KEY")
@@ -32,6 +34,8 @@ class BuildingGraph:
         workflow.add_node("transform_query", transform_query)
         workflow.add_node("financial_web_search", financial_web_search)
         workflow.add_node("show_result", show_result)
+        workflow.add_node("integrate_web_search", integrate_web_search)
+        workflow.add_node("evaluate_vectorstore_quality", evaluate_vectorstore_quality)
 
         workflow.add_conditional_edges(
             START,
@@ -54,6 +58,17 @@ class BuildingGraph:
             {
                 "financial_web_search": "financial_web_search",
                 "generate": "generate",
+                "integrate_web_search": "integrate_web_search",
+            },
+        )
+
+        # New edge for web integration
+        workflow.add_conditional_edges(
+            "integrate_web_search",
+            decide_after_web_integration,
+            {
+                "grade_documents": "grade_documents",
+                "financial_web_search": "financial_web_search",
             },
         )
 
