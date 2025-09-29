@@ -33,9 +33,9 @@ def memory_enhanced_retrieve(state: Dict[str, Any]) -> Dict[str, Any]:
         conversation_context = session_memory_manager.get_conversation_context()
         context_queries = [ctx['query'] for ctx in conversation_context[-2:]]  # Reduced from 3 to 2
         
-        # Generate cache key based on question and recent context
-        cache_context = {'recent_queries': context_queries} if context_queries else None
-        cached_result = session_memory_manager.get_cached_query_result(question, cache_context)
+        # Generate cache key based on question only (ignore context for exact matches)
+        # First try exact query match without context
+        cached_result = session_memory_manager.get_cached_query_result(question, None)
         print(f"Cache lookup for '{question}': {'HIT' if cached_result else 'MISS'}")
         print(f"Cache size: {len(session_memory_manager.query_cache)}")
     except Exception as e:
@@ -55,13 +55,15 @@ def memory_enhanced_retrieve(state: Dict[str, Any]) -> Dict[str, Any]:
     try:
         if result.get('documents'):
             quality_score = len(result['documents']) / 4.0  # Normalize to 0-1 based on max expected docs
+            # Cache without context for exact query matching
             session_memory_manager.cache_query_result(
                 question, 
                 result, 
-                cache_context, 
+                None,  # No context for simpler cache key
                 quality_score
             )
-            print(f"Cached query result with key: {session_memory_manager.generate_cache_key(question, cache_context)}")
+            cache_key = session_memory_manager.generate_cache_key(question, None)
+            print(f"Cached query result with key: {cache_key}")
     except Exception as e:
         print(f"Caching failed, continuing without cache: {e}")
     

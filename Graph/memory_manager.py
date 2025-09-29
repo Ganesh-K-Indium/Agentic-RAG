@@ -38,6 +38,13 @@ class MemoryManager:
             'vectorstore_scores': [],
             'user_satisfaction': []
         }
+        
+        # Track cache statistics for accurate hit rate calculation
+        self.cache_stats = {
+            'total_requests': 0,
+            'cache_hits': 0,
+            'cache_misses': 0
+        }
         self.user_preferences: Dict[str, Any] = {
             'preferred_detail_level': 'medium',
             'favorite_companies': [],
@@ -103,6 +110,7 @@ class MemoryManager:
     def get_cached_query_result(self, query: str, context: Optional[Dict] = None) -> Optional[Dict[str, Any]]:
         """Retrieve cached query result if available and valid."""
         cache_key = self.generate_cache_key(query, context)
+        self.cache_stats['total_requests'] += 1
         
         if cache_key in self.query_cache:
             cached_entry = self.query_cache[cache_key]
@@ -110,11 +118,15 @@ class MemoryManager:
                 # Update access count and timestamp
                 cached_entry['access_count'] += 1
                 cached_entry['last_accessed'] = time.time()
+                self.cache_stats['cache_hits'] += 1
+                print(f"CACHE HIT for query: {query[:50]}...")
                 return cached_entry['result']
             else:
                 # Remove expired entry
                 del self.query_cache[cache_key]
         
+        self.cache_stats['cache_misses'] += 1
+        print(f"CACHE MISS for query: {query[:50]}...")
         return None
     
     def cache_document_retrieval(self, query_embedding: List[float], documents: List[Any], 
@@ -256,10 +268,10 @@ class MemoryManager:
         }
     
     def _calculate_cache_hit_rate(self) -> float:
-        """Calculate cache hit rate."""
-        total_accesses = sum(entry.get('access_count', 1) for entry in self.query_cache.values())
-        cache_hits = sum(entry.get('access_count', 1) - 1 for entry in self.query_cache.values())
-        return cache_hits / total_accesses if total_accesses > 0 else 0.0
+        """Calculate cache hit rate based on actual requests."""
+        total_requests = self.cache_stats['total_requests']
+        cache_hits = self.cache_stats['cache_hits']
+        return cache_hits / total_requests if total_requests > 0 else 0.0
     
     def initialize_state_memory(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """Initialize memory components in graph state."""
