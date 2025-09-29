@@ -17,6 +17,62 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def _extract_document_source(metadata: dict) -> str:
+    """
+    Extract meaningful source information from document metadata.
+    
+    Args:
+        metadata: Document metadata dictionary
+        
+    Returns:
+        str: Formatted source string with company, file, and page info
+    """
+    if not metadata:
+        return "Unknown"
+    
+    # Try to build a meaningful source string from available metadata
+    source_parts = []
+    
+    # Add company information if available
+    if metadata.get('company'):
+        company = metadata['company'].upper()
+        source_parts.append(company)
+    
+    # Add source file information
+    if metadata.get('source_file'):
+        source_file = metadata['source_file']
+        # Remove file extension for cleaner display
+        if '.' in source_file:
+            source_file = source_file.rsplit('.', 1)[0]
+        source_parts.append(source_file)
+    
+    # Add page number if available
+    if metadata.get('page_num') is not None:
+        source_parts.append(f"Page {metadata['page_num']}")
+    
+    # Add content type if available and useful
+    if metadata.get('content_type') and metadata['content_type'] != 'text':
+        source_parts.append(f"({metadata['content_type']})")
+    
+    # If we have web search results, handle differently
+    if 'url' in metadata:
+        url = metadata['url']
+        # Extract domain name for cleaner display
+        if url.startswith('http'):
+            domain = url.split('/')[2] if len(url.split('/')) > 2 else url
+            source_parts.append(f"Web: {domain}")
+    
+    # Fallback to basic metadata keys
+    if not source_parts:
+        if metadata.get('source'):
+            return str(metadata['source'])
+        elif metadata.get('_collection_name'):
+            return f"Collection: {metadata['_collection_name']}"
+        else:
+            return "Document"
+    
+    return " - ".join(source_parts)
+
 # Input schema
 class QueryInput(BaseModel):
     query: str
@@ -62,7 +118,7 @@ async def ask_agent(payload: QueryInput):
             {
                 "content": (doc.page_content[:500] + "..." if len(doc.page_content) > 500 else doc.page_content) if hasattr(doc, 'page_content') else str(doc)[:500] + "...",
                 "metadata": getattr(doc, 'metadata', {}) if hasattr(doc, 'metadata') else {},
-                "source": getattr(doc, 'metadata', {}).get('source', 'Unknown') if hasattr(doc, 'metadata') else 'Unknown',
+                "source": _extract_document_source(getattr(doc, 'metadata', {}) if hasattr(doc, 'metadata') else {}),
                 "type": "LangChain Document" if hasattr(doc, 'page_content') else "Other"
             } for doc in documents
         ],
