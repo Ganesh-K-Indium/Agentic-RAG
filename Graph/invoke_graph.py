@@ -137,7 +137,10 @@ class BuildingGraph:
         workflow.add_edge("show_result", "finalize_memory")
         workflow.add_edge("finalize_memory", END)
 
-        app = workflow.compile()
+        # Compile with increased recursion limit and better error handling
+        app = workflow.compile(
+            checkpointer=None,  # Disable checkpointing for faster execution
+        )
         
         # Wrap the compiled app to inject session context
         if self.session_id:

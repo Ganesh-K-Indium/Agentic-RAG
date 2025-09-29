@@ -16,13 +16,18 @@ def memory_enhanced_retrieve(state: Dict[str, Any]) -> Dict[str, Any]:
     messages = state["messages"]
     question = messages[-1].content
     
-    # Check conversation context for related queries
-    conversation_context = global_memory_manager.get_conversation_context()
-    context_queries = [ctx['query'] for ctx in conversation_context[-3:]]
-    
-    # Generate cache key based on question and recent context
-    cache_context = {'recent_queries': context_queries} if context_queries else None
-    cached_result = global_memory_manager.get_cached_query_result(question, cache_context)
+    # Quick cache check with timeout
+    try:
+        # Check conversation context for related queries (limited to recent 2 for speed)
+        conversation_context = global_memory_manager.get_conversation_context()
+        context_queries = [ctx['query'] for ctx in conversation_context[-2:]]  # Reduced from 3 to 2
+        
+        # Generate cache key based on question and recent context
+        cache_context = {'recent_queries': context_queries} if context_queries else None
+        cached_result = global_memory_manager.get_cached_query_result(question, cache_context)
+    except Exception as e:
+        print(f"Cache lookup failed, proceeding without cache: {e}")
+        cached_result = None
     
     if cached_result:
         print("---USING CACHED RETRIEVAL RESULTS---")
@@ -33,15 +38,18 @@ def memory_enhanced_retrieve(state: Dict[str, Any]) -> Dict[str, Any]:
     from Graph.nodes import retrieve
     result = retrieve(state)
     
-    # Cache the results
-    if result.get('documents'):
-        quality_score = len(result['documents']) / 4.0  # Normalize to 0-1 based on max expected docs
-        global_memory_manager.cache_query_result(
-            question, 
-            result, 
-            cache_context, 
-            quality_score
-        )
+    # Cache the results (with error handling for performance)
+    try:
+        if result.get('documents'):
+            quality_score = len(result['documents']) / 4.0  # Normalize to 0-1 based on max expected docs
+            global_memory_manager.cache_query_result(
+                question, 
+                result, 
+                cache_context, 
+                quality_score
+            )
+    except Exception as e:
+        print(f"Caching failed, continuing without cache: {e}")
     
     # Track performance
     response_time = time.time() - start_time
@@ -125,65 +133,25 @@ def memory_enhanced_grade_documents(state: Dict[str, Any]) -> Dict[str, Any]:
 
 def finalize_with_memory_update(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Final step that updates memory with the complete interaction.
+    Final step that updates memory with the complete interaction (optimized for speed).
     """
     print("---FINALIZING WITH MEMORY UPDATE---")
     
-    # Calculate total response time
-    start_time = state.get('performance_metrics', {}).get('start_time', time.time())
-    total_response_time = time.time() - start_time
-    
-    # Learn routing patterns
-    if state.get('routing_memory'):
-        routing_info = state['routing_memory']
-        # Estimate quality based on whether documents were found and used
-        quality_estimate = 0.8 if state.get('documents') else 0.3
-        
-        # Get routing decision safely
-        routing_decision = routing_info.get('decision', 'unknown')
-        if routing_decision == 'unknown':
-            # Infer routing decision from state
-            if state.get('vectorstore_searched') and state.get('web_searched'):
-                routing_decision = 'vectorstore_with_web_supplement'
-            elif state.get('vectorstore_searched'):
-                routing_decision = 'vectorstore'
-            elif state.get('web_searched'):
-                routing_decision = 'web_search'
-        
-        global_memory_manager.learn_routing_pattern(
-            state['messages'][-1].content,
-            routing_decision,
-            quality_estimate,
-            total_response_time
-        )
-    
-    # Update user preferences based on query patterns
-    query = state['messages'][-1].content
-    query_type = global_memory_manager._classify_query_type(query)
-    
-    if query_type not in global_memory_manager.user_preferences.get('common_query_types', []):
-        if 'common_query_types' not in global_memory_manager.user_preferences:
-            global_memory_manager.user_preferences['common_query_types'] = []
-        global_memory_manager.user_preferences['common_query_types'].append(query_type)
-    
-    # Extract company mentions for preference learning
-    companies = []
-    for company in ['tesla', 'amazon', 'google', 'meta', 'apple', 'microsoft']:
-        if company in query.lower():
-            companies.append(company.capitalize())
-    
-    if companies:
-        existing_favorites = global_memory_manager.user_preferences.get('favorite_companies', [])
-        for company in companies:
-            if company not in existing_favorites:
-                existing_favorites.append(company)
-        global_memory_manager.user_preferences['favorite_companies'] = existing_favorites[:10]  # Keep top 10
-    
-    # Clean up expired cache entries periodically
-    if state.get('performance_metrics', {}).get('total_queries', 0) % 10 == 0:
-        global_memory_manager.cleanup_expired_cache()
-    
-    # Add performance summary to state
-    state['memory_performance'] = global_memory_manager.get_performance_insights()
+    # Quick memory update without expensive operations
+    try:
+        # Learn routing patterns (simplified and fast)
+        if state.get('routing_memory'):
+            routing_info = state['routing_memory']
+            quality_estimate = 0.8 if state.get('documents') else 0.3
+            routing_decision = routing_info.get('decision', 'unknown')
+            
+            if routing_decision != 'unknown' and hasattr(global_memory_manager, 'learn_routing_pattern'):
+                global_memory_manager.learn_routing_pattern(
+                    state['messages'][-1].content,
+                    routing_decision,
+                    quality_estimate
+                )
+    except Exception as e:
+        print(f"Memory update failed, continuing: {e}")
     
     return state

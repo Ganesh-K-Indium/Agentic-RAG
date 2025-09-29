@@ -51,9 +51,10 @@ class SessionAwareGraphWrapper:
         # Inject session context into the state
         session_enhanced_inputs = self._prepare_session_context(inputs)
         
-        # Execute the graph
+        # Execute the graph with optimized recursion limit for speed
         start_time = time.time()
-        result = self.compiled_graph.invoke(session_enhanced_inputs)
+        config = {"recursion_limit": 35}  # Reduced from 50 to 35 for faster completion
+        result = self.compiled_graph.invoke(session_enhanced_inputs, config=config)
         execution_time = time.time() - start_time
         
         # Post-process with session-specific learning

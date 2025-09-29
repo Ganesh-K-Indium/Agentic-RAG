@@ -289,17 +289,22 @@ def decide_to_generate(state):
 
     if not filtered_documents:
         # All documents have been filtered check_relevance
-        if not web_searched and vectorstore_searched:
+        retry_count = state.get("retry_count", 0)
+        if not web_searched and vectorstore_searched and retry_count < 2:
             print("---DECISION: NO RELEVANT VECTORSTORE DOCS, TRY WEB SEARCH---")
             return "integrate_web_search"
-        else:
-            print("---DECISION: NO RELEVANT DOCS AFTER ALL SEARCHES, FALLBACK TO FINANCIAL WEB SEARCH---")
+        elif not web_searched and retry_count < 2:
+            print("---DECISION: NO RELEVANT DOCS AFTER ALL SEARCHES, TRY FINANCIAL WEB SEARCH---")
             return "financial_web_search"
+        else:
+            print("---DECISION: NO RELEVANT DOCS FOUND, GENERATE WITH AVAILABLE CONTEXT---")
+            # Force generation even without perfect documents to prevent infinite loops
+            return "generate"
     else:
         # We have relevant documents, be more generous with what we consider sufficient
-        if vectorstore_searched and not web_searched and len(filtered_documents) < 2:
-            # Only supplement with web if we have very few documents (changed from 3 to 2)
-            print("---DECISION: VERY LIMITED VECTORSTORE RESULTS, SUPPLEMENT WITH WEB SEARCH---")
+        if vectorstore_searched and not web_searched and len(filtered_documents) == 1:
+            # Only supplement with web if we have just 1 document (reduced threshold)
+            print("---DECISION: SINGLE DOCUMENT FOUND, SUPPLEMENT WITH WEB SEARCH---")
             return "integrate_web_search"
         else:
             print(f"---DECISION: SUFFICIENT DOCUMENTS ({len(filtered_documents)}), GENERATE ANSWER---")
@@ -328,7 +333,7 @@ def grade_generation_v_documents_and_question(state):
 
     #  Track retry count in state
     retry_count = state.get("retry_count", 0)
-    max_retries = 2  # or 3, depending on how strict you want to be
+    max_retries = 1  # Reduced from 2 to 1 for faster responses
 
     llm = ChatOpenAI(model="gpt-4o")
     hallucination_grader = get_hallucination_chain(llm)
@@ -364,8 +369,13 @@ def grade_generation_v_documents_and_question(state):
             print("---DECISION: GENERATION ADDRESSES QUESTION---")
             return "useful"
         else:
-            print("---DECISION: GENERATION DOES NOT ADDRESS QUESTION---")
-            return "not useful"
+            # Be more lenient to avoid excessive retries
+            if retry_count >= 1:  # Accept after 1 retry instead of continuing
+                print("---DECISION: ACCEPTING GENERATION TO AVOID EXCESSIVE RETRIES---")
+                return "useful"
+            else:
+                print("---DECISION: GENERATION DOES NOT ADDRESS QUESTION---")
+                return "not useful"
     else:
         # For cross-referencing scenarios, be more lenient on retries
         is_cross_ref = cross_ref_analysis.get("needs_cross_reference") == "yes"
@@ -373,6 +383,7 @@ def grade_generation_v_documents_and_question(state):
         
         if retry_count >= adjusted_max_retries:
             print(f"---MAX RETRIES REACHED ({retry_count}), stopping loop---")
+            # Force acceptance to prevent infinite loops
             return "useful"  # fallback → treat as final result instead of looping forever
         else:
             print(f"---DECISION: GENERATION IS NOT GROUNDED, RETRY {retry_count + 1}/{adjusted_max_retries}---")
