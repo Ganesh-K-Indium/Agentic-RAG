@@ -46,11 +46,38 @@ async def ask_agent(payload: QueryInput):
     elif result.get('web_searched'):
         routing_decision = 'web_search'
     
+    # Extract comprehensive response data
+    documents = result.get('documents', [])
+    citation_info = result.get('citation_info', [])
+    tool_calls = result.get('tool_calls', [])
+    document_sources = result.get('document_sources', {})
+    cross_reference_analysis = result.get('cross_reference_analysis', {})
+    
     response_data = {
         "answer": result.get('Intermediate_message', result.get('messages', [{}])[-1]),
         "session_info": result.get('session_info', {}),
-        "documents_used": len(result.get('documents', [])),
-        "routing_decision": routing_decision
+        "documents_used": len(documents),
+        "routing_decision": routing_decision,
+        "documents": [
+            {
+                "content": (doc.page_content[:500] + "..." if len(doc.page_content) > 500 else doc.page_content) if hasattr(doc, 'page_content') else str(doc)[:500] + "...",
+                "metadata": getattr(doc, 'metadata', {}) if hasattr(doc, 'metadata') else {},
+                "source": getattr(doc, 'metadata', {}).get('source', 'Unknown') if hasattr(doc, 'metadata') else 'Unknown',
+                "type": "LangChain Document" if hasattr(doc, 'page_content') else "Other"
+            } for doc in documents
+        ],
+        "citations": citation_info,
+        "tool_calls": tool_calls,
+        "document_sources": {
+            k: len(v) for k, v in document_sources.items() if v
+        },
+        "cross_reference_analysis": cross_reference_analysis,
+        "performance_metrics": {
+            "vectorstore_searched": result.get('vectorstore_searched', False),
+            "web_searched": result.get('web_searched', False),
+            "vectorstore_quality": result.get('vectorstore_quality', 'none'),
+            "retry_count": result.get('retry_count', 0)
+        }
     }
     
     # Log the response to markdown file

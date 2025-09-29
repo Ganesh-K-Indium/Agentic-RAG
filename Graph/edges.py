@@ -427,6 +427,7 @@ def decide_cross_reference_approach(state):
 def decide_after_cross_reference_analysis(state):
     """
     Decides next step after cross-reference analysis.
+    Always categorizes documents to generate citations, then determines strategy.
     
     Args:
         state (dict): The current graph state
@@ -437,10 +438,7 @@ def decide_after_cross_reference_analysis(state):
     print("---DECIDE AFTER CROSS-REFERENCE ANALYSIS---")
     cross_ref_analysis = state.get("cross_reference_analysis", {})
     
-    if cross_ref_analysis.get("needs_cross_reference") == "yes":
-        print("---DECISION: CROSS-REFERENCING NEEDED, CATEGORIZE DOCUMENTS AND DETERMINE STRATEGY---")
-        return "categorize_documents"
-    else:
-        print("---DECISION: NO CROSS-REFERENCING NEEDED, USE STANDARD GENERATION---")
-        return "generate"
+    # Always categorize documents to generate proper citations and source tracking
+    print("---DECISION: CATEGORIZING DOCUMENTS FOR CITATIONS AND SOURCE TRACKING---")
+    return "categorize_documents"
 

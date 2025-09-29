@@ -4,25 +4,81 @@ import json
 import datetime
 
 def format_graph_output(data: dict) -> str:
-    """Format RAG graph output into Markdown with clear headings."""
+    """Format RAG graph output into comprehensive Markdown with all details."""
     lines = []
     
-    # Handle new response format - check if we have the complete graph result
+    # Handle new comprehensive response format
     if "answer" in data and isinstance(data["answer"], str):
-        # New format: answer is a string, other data is at root level
+        # Main answer section
         lines.append("## Answer")
         lines.append(data["answer"])
         lines.append("")
         
-        # Add session information
-        if "session_info" in data:
+        # Document Citations Section
+        if data.get("citations"):
+            lines.append("## Document Citations")
+            for idx, citation in enumerate(data["citations"], 1):
+                lines.append(f"### Citation {idx}")
+                lines.append(f"- **Source Type**: {citation.get('source_type', 'Unknown')}")
+                lines.append(f"- **Document ID**: {citation.get('document_id', 'N/A')}")
+                lines.append(f"- **Relevance Score**: {citation.get('relevance_score', 'N/A')}")
+                lines.append(f"- **Key Information**: {citation.get('key_information', 'N/A')}")
+                lines.append("")
+        
+        # Document Details Section  
+        if data.get("documents"):
+            lines.append("## Document Details")
+            for idx, doc in enumerate(data["documents"], 1):
+                lines.append(f"### Document {idx}")
+                lines.append(f"- **Source**: {doc.get('source', 'Unknown')}")
+                lines.append(f"- **Metadata**: {doc.get('metadata', {})}")
+                lines.append(f"- **Content Preview**: {doc.get('content', 'No content')}")
+                lines.append("")
+        
+        # Tool Calls Section
+        if data.get("tool_calls"):
+            lines.append("## Tool Calls")
+            for idx, tool_call in enumerate(data["tool_calls"], 1):
+                lines.append(f"### Tool Call {idx}")
+                if isinstance(tool_call, dict):
+                    for key, value in tool_call.items():
+                        lines.append(f"- **{key.replace('_', ' ').title()}**: {value}")
+                else:
+                    lines.append(f"- **Tool**: {tool_call}")
+                lines.append("")
+        
+        # Document Sources Summary
+        if data.get("document_sources"):
+            lines.append("## Document Sources Summary")
+            for source_type, count in data["document_sources"].items():
+                lines.append(f"- **{source_type.replace('_', ' ').title()}**: {count} documents")
+            lines.append("")
+        
+        # Cross-Reference Analysis
+        if data.get("cross_reference_analysis"):
+            lines.append("## Cross-Reference Analysis")
+            analysis = data["cross_reference_analysis"]
+            for key, value in analysis.items():
+                lines.append(f"- **{key.replace('_', ' ').title()}**: {value}")
+            lines.append("")
+        
+        # Performance Metrics
+        if data.get("performance_metrics"):
+            lines.append("## Performance Metrics")
+            metrics = data["performance_metrics"]
+            for key, value in metrics.items():
+                lines.append(f"- **{key.replace('_', ' ').title()}**: {value}")
+            lines.append("")
+        
+        # Session Information
+        if data.get("session_info"):
             lines.append("## Session Information")
             session_info = data["session_info"]
             for key, value in session_info.items():
                 lines.append(f"- **{key.replace('_', ' ').title()}**: {value}")
             lines.append("")
         
-        # Add processing information
+        # Processing Summary
         lines.append("## Processing Information")
         lines.append(f"- **Documents Used**: {data.get('documents_used', 0)}")
         lines.append(f"- **Routing Decision**: {data.get('routing_decision', 'Unknown')}")
@@ -203,17 +259,40 @@ def log_response(payload: dict, data: dict, folder: str = "responses") -> None:
     if payload.get('extra_inputs'):
         header_lines.append(f"Extra Inputs: {json.dumps(payload['extra_inputs'], indent=2)}")
     
-    # Add response summary
+    # Add comprehensive response summary
     if isinstance(data.get('answer'), str):
+        citations_count = len(data.get('citations', []))
+        tool_calls_count = len(data.get('tool_calls', []))
+        doc_sources = data.get('document_sources', {})
+        
         header_lines.extend([
             "",
             "## Response Summary",
             f"- Documents Used: {data.get('documents_used', 0)}",
+            f"- Citations Available: {citations_count}",
+            f"- Tool Calls Made: {tool_calls_count}",
             f"- Routing Decision: {data.get('routing_decision', 'Unknown')}",
             f"- Session ID: {data.get('session_info', {}).get('session_id', 'Unknown')}",
             f"- Conversation Length: {data.get('session_info', {}).get('conversation_length', 0)}",
             f"- Cache Hit Rate: {data.get('session_info', {}).get('cache_hit_rate', 0):.2%}",
         ])
+        
+        # Add document source breakdown if available
+        if doc_sources:
+            header_lines.append("- Document Sources:")
+            for source_type, count in doc_sources.items():
+                if count > 0:
+                    header_lines.append(f"  - {source_type.replace('_', ' ').title()}: {count}")
+        
+        # Add performance metrics summary
+        perf_metrics = data.get('performance_metrics', {})
+        if perf_metrics:
+            header_lines.append("- Processing Flags:")
+            for metric, value in perf_metrics.items():
+                if isinstance(value, bool) and value:
+                    header_lines.append(f"  - {metric.replace('_', ' ').title()}: ✓")
+                elif not isinstance(value, bool) and value not in [0, 'none', None]:
+                    header_lines.append(f"  - {metric.replace('_', ' ').title()}: {value}")
     
     header_lines.extend([
         "="*50,
