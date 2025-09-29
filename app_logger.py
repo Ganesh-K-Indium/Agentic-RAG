@@ -6,56 +6,144 @@ import datetime
 def format_graph_output(data: dict) -> str:
     """Format RAG graph output into Markdown with clear headings."""
     lines = []
+    
+    # Handle new response format - check if we have the complete graph result
+    if "answer" in data and isinstance(data["answer"], str):
+        # New format: answer is a string, other data is at root level
+        lines.append("## Answer")
+        lines.append(data["answer"])
+        lines.append("")
+        
+        # Add session information
+        if "session_info" in data:
+            lines.append("## Session Information")
+            session_info = data["session_info"]
+            for key, value in session_info.items():
+                lines.append(f"- **{key.replace('_', ' ').title()}**: {value}")
+            lines.append("")
+        
+        # Add processing information
+        lines.append("## Processing Information")
+        lines.append(f"- **Documents Used**: {data.get('documents_used', 0)}")
+        lines.append(f"- **Routing Decision**: {data.get('routing_decision', 'Unknown')}")
+        lines.append("")
+        
+        return "\n".join(lines)
+    
+    # Handle old format or detailed graph output
     answer_data = data.get("answer", {})
+    
+    # Check if answer_data has the detailed structure (messages, documents, etc.)
+    if isinstance(answer_data, dict):
+        if "messages" in answer_data:
+            lines.append("## Messages")
+            for i, msg in enumerate(answer_data["messages"], 1):
+                if isinstance(msg, dict):
+                    content = msg.get("content", "")
+                    msg_type = msg.get("type", "unknown")
+                    lines.append(f"### Message {i} ({msg_type})")
+                    lines.append(content)
+                elif hasattr(msg, 'content'):
+                    # Handle LangChain message objects
+                    lines.append(f"### Message {i}")
+                    lines.append(f"- **Content**: {msg.content}")
+                    if hasattr(msg, 'additional_kwargs') and msg.additional_kwargs:
+                        lines.append(f"- **Additional**: {msg.additional_kwargs}")
+                    if hasattr(msg, 'id'):
+                        lines.append(f"- **ID**: {msg.id}")
+                else:
+                    lines.append(f"- {msg}")
+                lines.append("")
 
-    if "messages" in answer_data:
-        lines.append("## Messages")
-        for i, msg in enumerate(answer_data["messages"], 1):
-            if isinstance(msg, dict):
-                content = msg.get("content", "")
-                msg_type = msg.get("type", "unknown")
-                lines.append(f"### Message {i} ({msg_type})")
-                lines.append(content)
-            else:
-                lines.append(f"- {msg}")
+        if "Intermediate_message" in answer_data:
+            lines.append("## Intermediate Message")
+            lines.append(answer_data["Intermediate_message"])
             lines.append("")
 
-    if "Intermediate_message" in answer_data:
-        lines.append("## Intermediate Message")
-        lines.append(answer_data["Intermediate_message"])
-        lines.append("")
-
-    if "documents" in answer_data:
-        lines.append("## Documents")
-        for i, doc in enumerate(answer_data["documents"], 1):
-            lines.append(f"### Document {i}")
-            if isinstance(doc, dict):
-                if "metadata" in doc:
-                    lines.append(f"**Metadata:** {json.dumps(doc['metadata'], indent=2)}")
-                if "page_content" in doc:
-                    lines.append(f"**Content:** {doc['page_content']}")
-                if "type" in doc:
-                    lines.append(f"**Type:** {doc['type']}")
+        if "documents" in answer_data:
+            lines.append("## Documents")
+            documents = answer_data["documents"]
+            # Handle case where documents might be a string or other type
+            if isinstance(documents, list):
+                for i, doc in enumerate(documents, 1):
+                    lines.append(f"### Document {i}")
+                    if isinstance(doc, dict):
+                        if "metadata" in doc:
+                            lines.append(f"**Metadata:** {json.dumps(doc['metadata'], indent=2)}")
+                        if "page_content" in doc:
+                            lines.append(f"**Content:** {doc['page_content']}")
+                        if "type" in doc:
+                            lines.append(f"**Type:** {doc['type']}")
+                    elif hasattr(doc, 'page_content'):
+                        # Handle LangChain document objects
+                        lines.append(f"**Content:** {doc.page_content}")
+                        if hasattr(doc, 'metadata'):
+                            lines.append(f"**Metadata:** {json.dumps(doc.metadata, indent=2)}")
+                    else:
+                        lines.append(str(doc))
+                    lines.append("")
             else:
-                lines.append(str(doc))
+                # Handle non-list documents (string, etc.)
+                lines.append(f"**Documents:** {str(documents)}")
+                lines.append("")
+
+        if "retry_count" in answer_data:
+            lines.append("## Retry Count")
+            lines.append(str(answer_data["retry_count"]))
             lines.append("")
 
-    if "retry_count" in answer_data:
-        lines.append("## Retry Count")
-        lines.append(str(answer_data["retry_count"]))
-        lines.append("")
+        if "tool_calls" in answer_data:
+            lines.append("## Tool Calls")
+            for i, call in enumerate(answer_data["tool_calls"], 1):
+                if isinstance(call, dict):
+                    lines.append(f"### Tool Call {i}")
+                    lines.append(f"- **Tool**: {call.get('tool', 'Unknown')}")
+                    if "input" in call:
+                        lines.append(f"- **Input**: {json.dumps(call.get('input'), indent=2)}")
+                    if "output" in call:
+                        lines.append(f"- **Output**: {json.dumps(call.get('output'), indent=2)}")
+                else:
+                    lines.append(f"### Tool Call {i}")
+                    lines.append(str(call))
+                lines.append("")
 
-    if "tool_calls" in answer_data:
-        lines.append("## Tool Calls")
-        for i, call in enumerate(answer_data["tool_calls"], 1):
-            if isinstance(call, dict):
-                lines.append(f"- Tool: {call.get('tool', 'Unknown')}")
-                if "input" in call:
-                    lines.append(f"- Input: {json.dumps(call.get('input'), indent=2)}")
-                if "output" in call:
-                    lines.append(f"- Output: {json.dumps(call.get('output'), indent=2)}")
+        # Add additional fields that might be present in the detailed format
+        if "vectorstore_searched" in answer_data:
+            lines.append("## Search Information")
+            lines.append(f"- **Vectorstore Searched**: {answer_data.get('vectorstore_searched', False)}")
+            lines.append(f"- **Web Searched**: {answer_data.get('web_searched', False)}")
+            lines.append(f"- **Vectorstore Quality**: {answer_data.get('vectorstore_quality', 'Unknown')}")
+            lines.append("")
+        
+        if "cross_reference_analysis" in answer_data:
+            lines.append("## Cross-Reference Analysis")
+            cross_ref = answer_data["cross_reference_analysis"]
+            if isinstance(cross_ref, dict):
+                for key, value in cross_ref.items():
+                    lines.append(f"- **{key.replace('_', ' ').title()}**: {value}")
             else:
-                lines.append(str(call))
+                lines.append(str(cross_ref))
+            lines.append("")
+
+        if "routing_memory" in answer_data:
+            lines.append("## Routing Memory")
+            routing = answer_data["routing_memory"]
+            if isinstance(routing, dict):
+                for key, value in routing.items():
+                    if key == "scores" and isinstance(value, dict):
+                        lines.append(f"- **Scores**:")
+                        for score_type, score_val in value.items():
+                            lines.append(f"  - {score_type}: {score_val:.3f}")
+                    else:
+                        lines.append(f"- **{key.replace('_', ' ').title()}**: {value}")
+            lines.append("")
+
+        if "performance_metrics" in answer_data:
+            lines.append("## Performance Metrics")
+            perf = answer_data["performance_metrics"]
+            if isinstance(perf, dict):
+                for key, value in perf.items():
+                    lines.append(f"- **{key.replace('_', ' ').title()}**: {value}")
             lines.append("")
 
     return "\n".join(lines)
@@ -102,14 +190,39 @@ def log_response(payload: dict, data: dict, folder: str = "responses") -> None:
     else:
         content = format_graph_output(data)
 
-    md_content = (
-        "# API Response Report\n"
-        + "="*50 + "\n"
-        + f"Generated: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        + f"Query: {payload['query']}\n"
-        + "="*50 + "\n\n"
-        + content
-    )
+    # Create header with more details
+    header_lines = [
+        "# API Response Report",
+        "="*50,
+        f"Generated: {now.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Query: {payload.get('query', 'Unknown')}",
+        f"User ID: {payload.get('user_id', 'Unknown')}",
+    ]
+    
+    # Add extra inputs if present
+    if payload.get('extra_inputs'):
+        header_lines.append(f"Extra Inputs: {json.dumps(payload['extra_inputs'], indent=2)}")
+    
+    # Add response summary
+    if isinstance(data.get('answer'), str):
+        header_lines.extend([
+            "",
+            "## Response Summary",
+            f"- Documents Used: {data.get('documents_used', 0)}",
+            f"- Routing Decision: {data.get('routing_decision', 'Unknown')}",
+            f"- Session ID: {data.get('session_info', {}).get('session_id', 'Unknown')}",
+            f"- Conversation Length: {data.get('session_info', {}).get('conversation_length', 0)}",
+            f"- Cache Hit Rate: {data.get('session_info', {}).get('cache_hit_rate', 0):.2%}",
+        ])
+    
+    header_lines.extend([
+        "="*50,
+        ""
+    ])
+
+    md_content = "\n".join(header_lines) + content
 
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(md_content)
+    
+    print(f"📝 Response logged to: {filepath}")

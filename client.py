@@ -4,165 +4,114 @@ from dotenv import load_dotenv
 import os
 import datetime
 
-# API endpoint
-url = "http://127.0.0.1:8001/ask"
+# Load environment variables
+load_dotenv()
 
-# payload = {
-#     "query": "Upload from Jira with project key TEST",
-# }
-payload = {
-    "query": "For Meta In 2024, by how much did excess tax benefits recognized from share-based compensation decrease our provision for income taxes?",
-}
+# API endpoint for the new memory-enhanced server
+url = "http://localhost:8001/ask"
 
-# --- Formatter function ---
-def format_graph_output(data: dict) -> str:
-    """Format final graph output into Markdown with clear headings."""
-    lines = []
+def test_memory_enhanced_server():
+    """Test the new memory-enhanced RAG server with session management."""
     
-    # Access the 'answer' key which contains the actual response data
-    answer_data = data.get('answer', {})
+    # Example query with user ID for session management
+    payload = {
+        "query": "tell me about meta's revenue by user geography based on estimate of the geography",
+        "user_id": "john_doe_analyst",  # Unique user identifier for session tracking
+        "extra_inputs": {}  # Optional additional parameters
+    }
     
-    # Messages
-    if "messages" in answer_data:
-        lines.append("## Messages")
-        messages = answer_data["messages"]
-        if isinstance(messages, list):
-            for i, msg in enumerate(messages, 1):
-                # Handle message objects with content attribute
-                if isinstance(msg, dict):
-                    content = msg.get('content', '')
-                    msg_type = msg.get('type', 'unknown')
-                    lines.append(f"### Message {i} ({msg_type})")
-                    lines.append(content)
-                    lines.append("")
-                else:
-                    lines.append(f"- **Message {i}:** {str(msg)}")
+    print("🚀 Testing Memory-Enhanced RAG Server")
+    print("=" * 50)
+    print(f"Query: {payload['query']}")
+    print(f"User ID: {payload['user_id']}")
+    print(f"Endpoint: {url}")
+    print("\n⏳ Processing query...")
+    
+    try:
+        # Send request to the server
+        response = requests.post(url, json=payload, timeout=60)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            print("\n✅ Response received successfully!")
+            print("=" * 50)
+            
+            # Display the answer
+            print("\n📄 ANSWER:")
+            print("-" * 30)
+            answer = data.get('answer', 'No answer provided')
+            if isinstance(answer, dict):
+                print(json.dumps(answer, indent=2))
+            else:
+                print(answer)
+            
+            # Display session information
+            print("\n👤 SESSION INFO:")
+            print("-" * 30)
+            session_info = data.get('session_info', {})
+            print(f"Session ID: {session_info.get('session_id', 'N/A')}")
+            print(f"User ID: {session_info.get('user_id', 'N/A')}")
+            print(f"Conversation Length: {session_info.get('conversation_length', 0)}")
+            print(f"Cache Hit Rate: {session_info.get('cache_hit_rate', 0):.2%}")
+            
+            # Display processing information
+            print("\n🔧 PROCESSING INFO:")
+            print("-" * 30)
+            print(f"Documents Used: {data.get('documents_used', 0)}")
+            print(f"Routing Decision: {data.get('routing_decision', 'Unknown')}")
+            
+            return data
+            
         else:
-            lines.append(str(messages))
-        lines.append("")
+            print(f"\n❌ Error: {response.status_code}")
+            print(f"Response: {response.text}")
+            return None
+            
+    except requests.exceptions.Timeout:
+        print("\n⏰ Request timed out. The server might be processing a complex query.")
+        return None
+    except requests.exceptions.ConnectionError:
+        print("\n🚨 Connection error. Make sure the server is running on port 8001.")
+        return None
+    except Exception as e:
+        print(f"\n❌ Unexpected error: {str(e)}")
+        return None
+
+def test_session_endpoint(user_id):
+    """Test the session management endpoint."""
+    session_url = f"http://localhost:8001/session/{user_id}"
     
-    # Intermediate message
-    if "Intermediate_message" in answer_data:
-        lines.append("## Intermediate Message")
-        lines.append(answer_data["Intermediate_message"])
-        lines.append("")
+    print(f"\n🔍 Testing Session Endpoint for user: {user_id}")
+    print("-" * 40)
     
-    # Documents
-    if "documents" in answer_data:
-        lines.append("## Documents")
-        documents = answer_data["documents"]
-        if isinstance(documents, list):
-            for i, doc in enumerate(documents, 1):
-                lines.append(f"### Document {i}")
-                if isinstance(doc, dict):
-                    # Handle document metadata
-                    if 'metadata' in doc:
-                        lines.append(f"**Metadata:** {json.dumps(doc['metadata'], indent=2)}")
-                    # Handle page content
-                    if 'page_content' in doc:
-                        lines.append(f"**Content:** {doc['page_content']}")
-                    # Handle document type
-                    if 'type' in doc:
-                        lines.append(f"**Type:** {doc['type']}")
-                else:
-                    lines.append(str(doc))
-                lines.append("")
+    try:
+        response = requests.get(session_url, timeout=10)
+        
+        if response.status_code == 200:
+            session_data = response.json()
+            print("✅ Session data retrieved:")
+            print(json.dumps(session_data, indent=2))
+            return session_data
         else:
-            lines.append(str(documents))
-        lines.append("")
+            print(f"❌ Error retrieving session: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Error: {str(e)}")
+        return None
+
+if __name__ == "__main__":
+    # Test the main query endpoint
+    result = test_memory_enhanced_server()
     
-    # Retry count
-    if "retry_count" in answer_data:
-        lines.append("## Retry Count")
-        lines.append(str(answer_data["retry_count"]))
-        lines.append("")
-    
-    # Tool calls
-    if "tool_calls" in answer_data:
-        lines.append("## Tool Calls")
-        tool_calls = answer_data["tool_calls"]
-        if isinstance(tool_calls, list):
-            for i, call in enumerate(tool_calls, 1):
-                lines.append(f"### Tool Call {i}")
-                if isinstance(call, dict):
-                    lines.append(f"- **Tool:** {call.get('tool', 'Unknown')}")
-                    if 'input' in call:
-                        lines.append(f"- **Input:** {json.dumps(call.get('input'), indent=2)}")
-                    if 'output' in call:
-                        lines.append(f"- **Output:** {json.dumps(call.get('output'), indent=2)}")
-                else:
-                    lines.append(f"- **Tool:** {str(call)}")
-                lines.append("")
-        else:
-            lines.append(str(tool_calls))
-        lines.append("")
-    
-    return "\n".join(lines)
-
-def format_ingestion_output(data: dict) -> str:
-    """Format ingestion response into Markdown with clear logs."""
-    lines = []
-    answer_data = data.get("answer", {})
-
-    # Request
-    if "request" in answer_data:
-        lines.append("## Request")
-        lines.append(answer_data["request"])
-        lines.append("")
-
-    # Logs
-    if "logs" in answer_data:
-        lines.append("## Ingestion Logs")
-        for i, log in enumerate(answer_data["logs"], 1):
-            lines.append(f"{i}. {log}")
-        lines.append("")
-
-    # File info
-    lines.append("## File Information")
-    lines.append(f"- **Source:** {answer_data.get('source')}")
-    lines.append(f"- **File Name:** {answer_data.get('file_name')}")
-    lines.append(f"- **Space Key:** {answer_data.get('space_key')}")
-    lines.append(f"- **Ticket ID:** {answer_data.get('ticket_id')}")
-    lines.append(f"- **File URL:** {answer_data.get('file_url')}")
-    lines.append("")
-
-    return "\n".join(lines)
-
-# --- Main code ---
-response = requests.post(url, json=payload)
-
-if response.status_code == 200:
-    data = response.json()
-    print(data)
-    
-    # Convert JSON into a clean report
-    if "logs" in data.get("answer", {}):
-        content = format_ingestion_output(data)
+    if result:
+        # Test the session endpoint
+        test_session_endpoint("john_doe_analyst")
+        
+        print("\n🎉 Client test completed successfully!")
+        print("\n💡 Try running this script multiple times to see memory caching in action!")
     else:
-        content = format_graph_output(data)
+        print("\n⚠️ Client test failed. Check if the server is running.")
+        print("Start the server with: python -m uvicorn app:app --reload --port 8001")
     
-    # Create folder if it doesn't exist
-    folder = "responses"
-    os.makedirs(folder, exist_ok=True)
-    
-    # Filename with timestamp
-    now = datetime.datetime.now()
-    filename = now.strftime("%Y-%m-%d_%H-%M-%S") + ".md"
-    filepath = os.path.join(folder, filename)
-    
-    # Markdown file content
-    md_content = (
-        "# API Response Report\n"
-        + "="*50 + "\n"
-        + f"**Generated:** {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        + f"**Query:** {payload['query']}\n"
-        + "="*50 + "\n\n"
-        + content
-    )
-    
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write(md_content)
-    
-    print(f"Response saved to {filepath}")
-else:
-    print("Error:", response.status_code, response.text)

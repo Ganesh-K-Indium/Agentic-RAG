@@ -29,10 +29,9 @@ openai
 
 # Utilities
 requests
-
+numpy  # For memory analytics and performance optimization
 
 python-multipart
-
 
 qdrant-client
 

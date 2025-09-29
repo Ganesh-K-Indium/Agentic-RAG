@@ -1,0 +1,189 @@
+"""
+Memory-enhanced nodes for the RAG system that leverage caching and conversation context.
+"""
+
+from Graph.memory_manager import global_memory_manager, with_memory
+import time
+from typing import Dict, Any
+
+def memory_enhanced_retrieve(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Enhanced retrieve function with memory capabilities.
+    """
+    print("---MEMORY-ENHANCED RETRIEVE---")
+    start_time = time.time()
+    
+    messages = state["messages"]
+    question = messages[-1].content
+    
+    # Check conversation context for related queries
+    conversation_context = global_memory_manager.get_conversation_context()
+    context_queries = [ctx['query'] for ctx in conversation_context[-3:]]
+    
+    # Generate cache key based on question and recent context
+    cache_context = {'recent_queries': context_queries} if context_queries else None
+    cached_result = global_memory_manager.get_cached_query_result(question, cache_context)
+    
+    if cached_result:
+        print("---USING CACHED RETRIEVAL RESULTS---")
+        state['performance_metrics']['cache_hits'] += 1
+        return {**state, **cached_result}
+    
+    # If not cached, perform normal retrieval
+    from Graph.nodes import retrieve
+    result = retrieve(state)
+    
+    # Cache the results
+    if result.get('documents'):
+        quality_score = len(result['documents']) / 4.0  # Normalize to 0-1 based on max expected docs
+        global_memory_manager.cache_query_result(
+            question, 
+            result, 
+            cache_context, 
+            quality_score
+        )
+    
+    # Track performance
+    response_time = time.time() - start_time
+    global_memory_manager.performance_metrics['response_times'].append(response_time)
+    
+    return result
+
+
+def memory_enhanced_generate(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Enhanced generate function that uses conversation memory for better responses.
+    """
+    print("---MEMORY-ENHANCED GENERATE---")
+    
+    # Get conversation context for continuity
+    conversation_context = global_memory_manager.get_conversation_context()
+    if conversation_context:
+        # Add conversation context to the generation process
+        context_summary = []
+        for ctx in conversation_context[-2:]:  # Last 2 interactions
+            context_summary.append(f"Previous Q: {ctx['query'][:100]}...")
+            if ctx.get('user_feedback') and ctx['user_feedback'] > 0.7:
+                context_summary.append("(User found this helpful)")
+        
+        if context_summary:
+            print(f"Using conversation context: {context_summary}")
+            # Add context to state for generation
+            state['conversation_context'] = context_summary
+    
+    # Check user preferences for response formatting
+    user_prefs = global_memory_manager.user_preferences
+    if user_prefs.get('preferred_detail_level'):
+        state['detail_level'] = user_prefs['preferred_detail_level']
+    if user_prefs.get('response_format_preference'):
+        state['format_preference'] = user_prefs['response_format_preference']
+    
+    # Perform generation (import here to avoid circular imports)
+    from Graph.nodes import generate
+    result = generate(state)
+    
+    # Update conversation memory
+    if result.get('Intermediate_message'):
+        context_used = [doc.metadata.get('source_file', 'unknown') for doc in state.get('documents', [])]
+        global_memory_manager.update_conversation_memory(
+            state['messages'][-1].content,
+            result['Intermediate_message'],
+            context_used
+        )
+    
+    return result
+
+
+def memory_enhanced_grade_documents(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Enhanced document grading that learns from user feedback and past decisions.
+    """
+    print("---MEMORY-ENHANCED DOCUMENT GRADING---")
+    
+    # Get conversation context to understand document relevance patterns
+    conversation_context = global_memory_manager.get_conversation_context()
+    recent_feedback = [ctx.get('user_feedback', 0) for ctx in conversation_context if ctx.get('user_feedback')]
+    
+    # If recent feedback is positive, be more inclusive with similar document types
+    if recent_feedback and sum(recent_feedback) / len(recent_feedback) > 0.7:
+        print("---APPLYING LENIENT GRADING BASED ON POSITIVE FEEDBACK---")
+        # This would be implemented in the actual grading logic
+        state['grading_mode'] = 'lenient'
+    
+    # Perform normal document grading
+    from Graph.nodes import grade_documents
+    result = grade_documents(state)
+    
+    # Learn from grading patterns
+    if result.get('documents'):
+        grading_quality = len(result['documents']) / len(state.get('documents', [1]))
+        # This could be used to improve future grading thresholds
+        global_memory_manager.performance_metrics['vectorstore_scores'].append(grading_quality)
+    
+    return result
+
+
+def finalize_with_memory_update(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Final step that updates memory with the complete interaction.
+    """
+    print("---FINALIZING WITH MEMORY UPDATE---")
+    
+    # Calculate total response time
+    start_time = state.get('performance_metrics', {}).get('start_time', time.time())
+    total_response_time = time.time() - start_time
+    
+    # Learn routing patterns
+    if state.get('routing_memory'):
+        routing_info = state['routing_memory']
+        # Estimate quality based on whether documents were found and used
+        quality_estimate = 0.8 if state.get('documents') else 0.3
+        
+        # Get routing decision safely
+        routing_decision = routing_info.get('decision', 'unknown')
+        if routing_decision == 'unknown':
+            # Infer routing decision from state
+            if state.get('vectorstore_searched') and state.get('web_searched'):
+                routing_decision = 'vectorstore_with_web_supplement'
+            elif state.get('vectorstore_searched'):
+                routing_decision = 'vectorstore'
+            elif state.get('web_searched'):
+                routing_decision = 'web_search'
+        
+        global_memory_manager.learn_routing_pattern(
+            state['messages'][-1].content,
+            routing_decision,
+            quality_estimate,
+            total_response_time
+        )
+    
+    # Update user preferences based on query patterns
+    query = state['messages'][-1].content
+    query_type = global_memory_manager._classify_query_type(query)
+    
+    if query_type not in global_memory_manager.user_preferences.get('common_query_types', []):
+        if 'common_query_types' not in global_memory_manager.user_preferences:
+            global_memory_manager.user_preferences['common_query_types'] = []
+        global_memory_manager.user_preferences['common_query_types'].append(query_type)
+    
+    # Extract company mentions for preference learning
+    companies = []
+    for company in ['tesla', 'amazon', 'google', 'meta', 'apple', 'microsoft']:
+        if company in query.lower():
+            companies.append(company.capitalize())
+    
+    if companies:
+        existing_favorites = global_memory_manager.user_preferences.get('favorite_companies', [])
+        for company in companies:
+            if company not in existing_favorites:
+                existing_favorites.append(company)
+        global_memory_manager.user_preferences['favorite_companies'] = existing_favorites[:10]  # Keep top 10
+    
+    # Clean up expired cache entries periodically
+    if state.get('performance_metrics', {}).get('total_queries', 0) % 10 == 0:
+        global_memory_manager.cleanup_expired_cache()
+    
+    # Add performance summary to state
+    state['memory_performance'] = global_memory_manager.get_performance_insights()
+    
+    return state

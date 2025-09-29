@@ -161,7 +161,7 @@ def get_company_name(llm):
     12. pfizer
     
     ## Instructions
-    - make sure you should only generate the comapny name nothing else.
+    - make sure you should only generate the company name nothing else.
     - if user is asking about companies in a short form or abbriviations like jpmc, you should be able to map it with jp morgon
     - Strictly do not change the company spellings, keep them as it is as mentioned above.
     """

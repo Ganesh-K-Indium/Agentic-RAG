@@ -13,6 +13,7 @@ from Graph.edges import (route_question, decide_to_generate,
                          grade_generation_v_documents_and_question,
                          decide_after_web_integration, decide_cross_reference_approach,
                          decide_after_cross_reference_analysis)
+from Graph.session_aware_wrapper import SessionAwareGraphWrapper
 load_dotenv()
 os.environ["GROQ_API_KEY"]=os.getenv("GROQ_API_KEY")
 os.environ["TAVILY_API_KEY"]=os.getenv("TAVILY_API_KEY")
@@ -21,6 +22,15 @@ class BuildingGraph:
     """
     This class has one class method which is responsible for building the graph
     """
+    def __init__(self, session_id: str = None):
+        """
+        Initialize graph builder with session awareness.
+        
+        Args:
+            session_id: Unique identifier for the user session
+        """
+        self.session_id = session_id
+        
     def get_graph(self):
         """
         This class method is responsible for creating the graph
@@ -29,11 +39,19 @@ class BuildingGraph:
         """
         workflow = StateGraph(GraphState)
 
+        # Import memory-enhanced nodes
+        from Graph.memory_enhanced_nodes import (
+            memory_enhanced_retrieve, 
+            memory_enhanced_generate, 
+            memory_enhanced_grade_documents,
+            finalize_with_memory_update
+        )
+        
         workflow.add_node("image_analyses_retrival",retrieve_from_images_data)
         workflow.add_node("web_search", web_search)
-        workflow.add_node("retrieve", retrieve)
-        workflow.add_node("grade_documents", grade_documents)
-        workflow.add_node("generate", generate)
+        workflow.add_node("retrieve", memory_enhanced_retrieve)  # Memory-enhanced
+        workflow.add_node("grade_documents", memory_enhanced_grade_documents)  # Memory-enhanced
+        workflow.add_node("generate", memory_enhanced_generate)  # Memory-enhanced
         workflow.add_node("transform_query", transform_query)
         workflow.add_node("financial_web_search", financial_web_search)
         workflow.add_node("show_result", show_result)
@@ -43,6 +61,7 @@ class BuildingGraph:
         workflow.add_node("determine_strategy", determine_summary_strategy)
         workflow.add_node("categorize_documents", categorize_documents_by_source)
         workflow.add_node("generate_with_citations", generate_with_cross_reference_and_citations)
+        workflow.add_node("finalize_memory", finalize_with_memory_update)  # New memory finalization node
 
         workflow.add_conditional_edges(
             START,
@@ -115,14 +134,32 @@ class BuildingGraph:
                 "not useful": "transform_query",
             },
         )
-        workflow.add_edge("show_result", END)
+        workflow.add_edge("show_result", "finalize_memory")
+        workflow.add_edge("finalize_memory", END)
 
         app = workflow.compile()
-        return app
+        
+        # Wrap the compiled app to inject session context
+        if self.session_id:
+            return SessionAwareGraphWrapper(app, self.session_id)
+        else:
+            return app
 
 # graph_obj = BuildingGraph()
 # agent = graph_obj.get_graph()
 if __name__ == '__main__':
+    # Example with session-aware execution
+    from Graph.session_aware_wrapper import global_session_manager_v2
+    import time
+    
+    # Create a session-specific graph
+    user_session_id = f"demo_user_{int(time.time())}"
+    print(f"Creating session: {user_session_id}")
+    
+    # Get session-aware graph
+    session_graph = global_session_manager_v2.get_or_create_session_graph(
+        user_session_id, BuildingGraph
+    )
     
     inputs = {
         "messages": ["""tell me about the distribution of discovery projects across various 
@@ -138,8 +175,15 @@ if __name__ == '__main__':
         "citation_info": [],
         "summary_strategy": "single_source"
     }
-    graph_obj = BuildingGraph()
-    agent = graph_obj.get_graph()
-    messages = agent.invoke(inputs)
+    
+    # Execute with session context
+    messages = session_graph.invoke(inputs)
     print(messages["messages"][1].content)
+    
+    # Show session information
+    session_summary = session_graph.get_session_summary()
+    print(f"\nSession Summary:")
+    print(f"Session ID: {session_summary['session_id']}")
+    print(f"Memory Manager ID: {session_summary['memory_manager_id']}")
+    print(f"Conversation Length: {session_summary['conversation_length']}")
     

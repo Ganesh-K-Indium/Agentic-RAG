@@ -8,7 +8,7 @@ from load_vector_dbs.load_dbs import load_vector_database
 
 def route_question(state):
     """
-    Route question using integrated approach - prefer vectorstore but prepare for web integration.
+    Route question using integrated approach with memory-enhanced routing.
 
     Args:
         state (dict): The current graph state
@@ -16,11 +16,40 @@ def route_question(state):
     Returns:
         str: Next node to call
     """
+    from Graph.memory_manager import global_memory_manager
+    import time
 
     print("---ROUTE QUESTION WITH INTEGRATED APPROACH---")
+    start_time = time.time()
+    
+    # Initialize memory components
+    state = global_memory_manager.initialize_state_memory(state)
+    
     messages = state["messages"]
     question = messages[-1].content
     print(f"Question to route: {question}")
+    
+    # Initialize variables at the top to prevent UnboundLocalError
+    text_results = None
+    image_results = None
+    text_points = []
+    image_points = []
+    text_relevance_score = 0
+    image_relevance_score = 0
+    max_text_score = 0
+    max_image_score = 0
+    
+    # Check for routing recommendation from learned patterns
+    routing_recommendation = global_memory_manager.get_routing_recommendation(question)
+    if routing_recommendation:
+        print(f"---MEMORY RECOMMENDED ROUTE: {routing_recommendation}---")
+        # Still verify with vectorstore scores but bias towards recommendation
+    
+    # Check conversation context for better routing
+    conversation_context = global_memory_manager.get_conversation_context()
+    if conversation_context:
+        recent_queries = [ctx['query'] for ctx in conversation_context[-2:]]
+        print(f"Recent conversation context: {recent_queries}")
     
     try:
         init = load_vector_database()
@@ -29,30 +58,84 @@ def route_question(state):
         # Generate embedding for the question
         query_embedding = init.embeddings.embed_query(question)
         print(f"Generated embedding with dimension: {len(query_embedding)}")
+        
+        # Check for cached documents first
+        cached_docs = global_memory_manager.get_cached_documents(query_embedding)
+        if cached_docs:
+            print("---USING CACHED DOCUMENT RESULTS---")
+            text_points = cached_docs.get('documents', [])
+            text_relevance_score = sum(cached_docs.get('scores', [])) / len(cached_docs.get('scores', [1]))
+            max_text_score = max(cached_docs.get('scores', [0]))
+            image_points = []  # Simplified for cached case
+            image_relevance_score = 0
+            max_image_score = 0
+            state['performance_metrics']['cache_hits'] += 1
+        else:
+            # Qdrant similarity search for top 5 text docs
+            text_results = init.qdrant_client.query_points(
+                collection_name=vectorstore.collection_name,
+                query=query_embedding,
+                limit=5,
+                with_payload=True
+            )
+            print(f"Text search completed for collection: {vectorstore.collection_name}")
 
-        # Qdrant similarity search for top 5 text docs
-        text_results = init.qdrant_client.query_points(
-            collection_name=vectorstore.collection_name,
-            query=query_embedding,
-            limit=5,
-            with_payload=True
-        )
-        print(f"Text search completed for collection: {vectorstore.collection_name}")
-
-        # Get image vector store
-        image_vectorstore, _, _ = init.get_image_retriever()
-        image_results = init.qdrant_client.query_points(
-            collection_name=image_vectorstore.collection_name,
-            query=query_embedding,
-            limit=5,
-            with_payload=True
-        )
-        print(f"Image search completed for collection: {image_vectorstore.collection_name}")
+            # Get image vector store
+            image_vectorstore, _, _ = init.get_image_retriever()
+            image_results = init.qdrant_client.query_points(
+                collection_name=image_vectorstore.collection_name,
+                query=query_embedding,
+                limit=5,
+                with_payload=True
+            )
+            print(f"Image search completed for collection: {image_vectorstore.collection_name}")
+            
+            # Extract results safely and calculate scores
+            text_relevance_score = 0
+            image_relevance_score = 0
+            max_text_score = 0
+            max_image_score = 0
+            
+            text_points = []
+            # Qdrant query_points returns points attribute, not result
+            if hasattr(text_results, 'points') and text_results.points:
+                text_points = text_results.points
+                scores = [point.score for point in text_points if hasattr(point, 'score') and point.score is not None]
+                if scores:
+                    text_relevance_score = sum(scores) / len(scores)  # Average instead of sum
+                    max_text_score = max(scores)
+                    # Cache the results
+                    global_memory_manager.cache_document_retrieval(
+                        query_embedding, text_points, scores, "text"
+                    )
+            elif hasattr(text_results, 'result') and text_results.result:
+                # Fallback for older API
+                text_points = text_results.result
+                scores = [point.score for point in text_points if hasattr(point, 'score') and point.score is not None]
+                if scores:
+                    text_relevance_score = sum(scores) / len(scores)
+                    max_text_score = max(scores)
+            
+            image_points = []
+            # Qdrant query_points returns points attribute, not result
+            if hasattr(image_results, 'points') and image_results.points:
+                image_points = image_results.points
+                scores = [point.score for point in image_points if hasattr(point, 'score') and point.score is not None]
+                if scores:
+                    image_relevance_score = sum(scores) / len(scores)  # Average instead of sum
+                    max_image_score = max(scores)
+            elif hasattr(image_results, 'result') and image_results.result:
+                # Fallback for older API
+                image_points = image_results.result
+                scores = [point.score for point in image_points if hasattr(point, 'score') and point.score is not None]
+                if scores:
+                    image_relevance_score = sum(scores) / len(scores)
+                    max_image_score = max(scores)
         
     except Exception as e:
         print(f"Error during vector search: {str(e)}")
         print("---ROUTE: FALLBACK TO VECTORSTORE DUE TO SEARCH ERROR---")
-        return "vectorstore"
+        # Variables are already initialized at the top, so just continue with routing logic
 
     # Calculate relevance scores more robustly
     text_relevance_score = 0
@@ -63,7 +146,7 @@ def route_question(state):
     # Extract results safely and calculate scores
     text_points = []
     # Qdrant query_points returns points attribute, not result
-    if hasattr(text_results, 'points') and text_results.points:
+    if text_results and hasattr(text_results, 'points') and text_results.points:
         text_points = text_results.points
         scores = [point.score for point in text_points if hasattr(point, 'score') and point.score is not None]
         if scores:
@@ -79,7 +162,7 @@ def route_question(state):
     
     image_points = []
     # Qdrant query_points returns points attribute, not result
-    if hasattr(image_results, 'points') and image_results.points:
+    if image_results and hasattr(image_results, 'points') and image_results.points:
         image_points = image_results.points
         scores = [point.score for point in image_points if hasattr(point, 'score') and point.score is not None]
         if scores:
@@ -105,7 +188,7 @@ def route_question(state):
     print(f"Image: avg={image_relevance_score:.3f}, max={max_image_score:.3f}, docs={len(image_points)}")
     print(f"Best overall score: {best_overall_score:.3f}, Average: {average_relevance:.3f}, Total docs: {vectorstore_confidence}")
 
-    # Enhanced routing logic with more reasonable thresholds
+    # Enhanced routing logic with memory-informed decisions
     # Check if it's clearly a web-only query first with stronger temporal detection
     strong_temporal_indicators = ["today", "current", "latest", "recent", "news", "this year", "now"]
     stock_price_indicators = ["stock price", "market cap", "share price", "current price"]
@@ -118,36 +201,72 @@ def route_question(state):
     
     is_strong_temporal_query = has_strong_temporal or has_stock_price or has_temporal_year
     
-    # For strong temporal queries, prioritize web search more aggressively
-    if is_strong_temporal_query:
-        if has_stock_price or "today" in question.lower() or "current" in question.lower():
-            print("---ROUTE: WEB SEARCH (strong temporal/real-time info needed)---")
-            return "web_search"
-        elif best_overall_score < 0.6:  # Higher threshold for temporal queries
-            print("---ROUTE: WEB SEARCH (temporal info needed, moderate vectorstore relevance)---")
-            return "web_search"
+    # Memory-informed routing decision
+    routing_decision = None
     
-    # Standard routing for non-temporal queries
-    if vectorstore_confidence >= 3 and best_overall_score > 0.4:
-        print("---ROUTE: HIGH CONFIDENCE VECTORSTORE SEARCH---")
-        return "vectorstore"
-    elif vectorstore_confidence >= 2 and best_overall_score > 0.3:
-        print("---ROUTE: GOOD CONFIDENCE VECTORSTORE SEARCH---")
-        return "vectorstore"
-    elif vectorstore_confidence >= 1 and best_overall_score > 0.2:
-        print("---ROUTE: MODERATE CONFIDENCE VECTORSTORE SEARCH (may need web supplement)---")
-        return "vectorstore"
-    elif vectorstore_confidence >= 1:
-        # Documents found but low scores - still try vectorstore first for complex queries
-        print(f"---ROUTE: VECTORSTORE FIRST (documents found but low scores: {best_overall_score:.3f})---")
-        return "vectorstore"
-    else:
+    # Apply routing recommendation if available and scores support it
+    if routing_recommendation:
+        if routing_recommendation == "vectorstore" and best_overall_score > 0.3:
+            routing_decision = "vectorstore"
+            print(f"---ROUTE: MEMORY-OPTIMIZED VECTORSTORE (learned pattern, score: {best_overall_score:.3f})---")
+        elif routing_recommendation == "web_search" and is_strong_temporal_query:
+            routing_decision = "web_search"
+            print("---ROUTE: MEMORY-OPTIMIZED WEB SEARCH (learned pattern for temporal queries)---")
+    
+    # If no memory recommendation or it doesn't apply, use standard logic
+    if not routing_decision:
+        # For strong temporal queries, prioritize web search more aggressively
         if is_strong_temporal_query:
-            print("---ROUTE: WEB SEARCH (temporal query, no vectorstore docs)---")
-            return "web_search"
-        else:
-            print("---ROUTE: TRY VECTORSTORE FIRST (no docs found, fallback attempt)---")
-            return "vectorstore"
+            if has_stock_price or "today" in question.lower() or "current" in question.lower():
+                routing_decision = "web_search"
+                print("---ROUTE: WEB SEARCH (strong temporal/real-time info needed)---")
+            elif best_overall_score < 0.6:  # Higher threshold for temporal queries
+                routing_decision = "web_search"
+                print("---ROUTE: WEB SEARCH (temporal info needed, moderate vectorstore relevance)---")
+        
+        # Standard routing for non-temporal queries
+        if not routing_decision:
+            if vectorstore_confidence >= 3 and best_overall_score > 0.4:
+                routing_decision = "vectorstore"
+                print("---ROUTE: HIGH CONFIDENCE VECTORSTORE SEARCH---")
+            elif vectorstore_confidence >= 2 and best_overall_score > 0.3:
+                routing_decision = "vectorstore"
+                print("---ROUTE: GOOD CONFIDENCE VECTORSTORE SEARCH---")
+            elif vectorstore_confidence >= 1 and best_overall_score > 0.2:
+                routing_decision = "vectorstore"
+                print("---ROUTE: MODERATE CONFIDENCE VECTORSTORE SEARCH (may need web supplement)---")
+            elif vectorstore_confidence >= 1:
+                # Documents found but low scores - still try vectorstore first for complex queries
+                routing_decision = "vectorstore"
+                print(f"---ROUTE: VECTORSTORE FIRST (documents found but low scores: {best_overall_score:.3f})---")
+            else:
+                if is_strong_temporal_query:
+                    routing_decision = "web_search"
+                    print("---ROUTE: WEB SEARCH (temporal query, no vectorstore docs)---")
+                else:
+                    routing_decision = "vectorstore"
+                    print("---ROUTE: TRY VECTORSTORE FIRST (no docs found, fallback attempt)---")
+    
+    # Record routing decision for learning (with safety check)
+    response_time = time.time() - start_time
+    
+    # Safety check: ensure routing_decision is never None
+    if routing_decision is None:
+        routing_decision = "vectorstore"  # Default fallback
+        print("---ROUTE: FALLBACK TO VECTORSTORE (no decision made)---")
+    
+    state['routing_memory'] = {
+        'decision': routing_decision,
+        'scores': {'text': best_text_score, 'image': best_image_score, 'overall': best_overall_score},
+        'response_time': response_time,
+        'temporal_query': is_strong_temporal_query,
+        'recommendation_used': routing_recommendation is not None
+    }
+    
+    # Update performance metrics
+    state['performance_metrics']['total_queries'] += 1
+    
+    return routing_decision
     
 def decide_to_generate(state):
     """
