@@ -16,15 +16,28 @@ def memory_enhanced_retrieve(state: Dict[str, Any]) -> Dict[str, Any]:
     messages = state["messages"]
     question = messages[-1].content
     
+    # Get session-specific memory manager
+    session_memory_manager = global_memory_manager  # Default fallback
+    if 'session_metadata' in state and 'user_id' in state['session_metadata']:
+        # Use session-specific memory from session manager
+        from Graph.session_aware_wrapper import global_session_manager_v2
+        session_id = state['session_metadata'].get('session_id', 'default')
+        session_graph = global_session_manager_v2.active_sessions.get(session_id)
+        if session_graph and hasattr(session_graph, 'session_memory_manager'):
+            session_memory_manager = session_graph.session_memory_manager
+            print(f"Using session memory manager for: {session_id}")
+    
     # Quick cache check with timeout
     try:
         # Check conversation context for related queries (limited to recent 2 for speed)
-        conversation_context = global_memory_manager.get_conversation_context()
+        conversation_context = session_memory_manager.get_conversation_context()
         context_queries = [ctx['query'] for ctx in conversation_context[-2:]]  # Reduced from 3 to 2
         
         # Generate cache key based on question and recent context
         cache_context = {'recent_queries': context_queries} if context_queries else None
-        cached_result = global_memory_manager.get_cached_query_result(question, cache_context)
+        cached_result = session_memory_manager.get_cached_query_result(question, cache_context)
+        print(f"Cache lookup for '{question}': {'HIT' if cached_result else 'MISS'}")
+        print(f"Cache size: {len(session_memory_manager.query_cache)}")
     except Exception as e:
         print(f"Cache lookup failed, proceeding without cache: {e}")
         cached_result = None
@@ -42,18 +55,22 @@ def memory_enhanced_retrieve(state: Dict[str, Any]) -> Dict[str, Any]:
     try:
         if result.get('documents'):
             quality_score = len(result['documents']) / 4.0  # Normalize to 0-1 based on max expected docs
-            global_memory_manager.cache_query_result(
+            session_memory_manager.cache_query_result(
                 question, 
                 result, 
                 cache_context, 
                 quality_score
             )
+            print(f"Cached query result with key: {session_memory_manager.generate_cache_key(question, cache_context)}")
     except Exception as e:
         print(f"Caching failed, continuing without cache: {e}")
     
     # Track performance
     response_time = time.time() - start_time
-    global_memory_manager.performance_metrics['response_times'].append(response_time)
+    try:
+        session_memory_manager.performance_metrics['response_times'].append(response_time)
+    except Exception as e:
+        print(f"Performance tracking failed: {e}")
     
     return result
 
@@ -64,8 +81,17 @@ def memory_enhanced_generate(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     print("---MEMORY-ENHANCED GENERATE---")
     
+    # Get session-specific memory manager
+    session_memory_manager = global_memory_manager  # Default fallback
+    if 'session_metadata' in state:
+        from Graph.session_aware_wrapper import global_session_manager_v2
+        session_id = state['session_metadata'].get('session_id', 'default')
+        session_graph = global_session_manager_v2.active_sessions.get(session_id)
+        if session_graph and hasattr(session_graph, 'session_memory_manager'):
+            session_memory_manager = session_graph.session_memory_manager
+    
     # Get conversation context for continuity
-    conversation_context = global_memory_manager.get_conversation_context()
+    conversation_context = session_memory_manager.get_conversation_context()
     if conversation_context:
         # Add conversation context to the generation process
         context_summary = []
@@ -80,7 +106,7 @@ def memory_enhanced_generate(state: Dict[str, Any]) -> Dict[str, Any]:
             state['conversation_context'] = context_summary
     
     # Check user preferences for response formatting
-    user_prefs = global_memory_manager.user_preferences
+    user_prefs = session_memory_manager.user_preferences
     if user_prefs.get('preferred_detail_level'):
         state['detail_level'] = user_prefs['preferred_detail_level']
     if user_prefs.get('response_format_preference'):
@@ -93,7 +119,7 @@ def memory_enhanced_generate(state: Dict[str, Any]) -> Dict[str, Any]:
     # Update conversation memory
     if result.get('Intermediate_message'):
         context_used = [doc.metadata.get('source_file', 'unknown') for doc in state.get('documents', [])]
-        global_memory_manager.update_conversation_memory(
+        session_memory_manager.update_conversation_memory(
             state['messages'][-1].content,
             result['Intermediate_message'],
             context_used
@@ -108,8 +134,17 @@ def memory_enhanced_grade_documents(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     print("---MEMORY-ENHANCED DOCUMENT GRADING---")
     
+    # Get session-specific memory manager
+    session_memory_manager = global_memory_manager  # Default fallback
+    if 'session_metadata' in state:
+        from Graph.session_aware_wrapper import global_session_manager_v2
+        session_id = state['session_metadata'].get('session_id', 'default')
+        session_graph = global_session_manager_v2.active_sessions.get(session_id)
+        if session_graph and hasattr(session_graph, 'session_memory_manager'):
+            session_memory_manager = session_graph.session_memory_manager
+            
     # Get conversation context to understand document relevance patterns
-    conversation_context = global_memory_manager.get_conversation_context()
+    conversation_context = session_memory_manager.get_conversation_context()
     recent_feedback = [ctx.get('user_feedback', 0) for ctx in conversation_context if ctx.get('user_feedback')]
     
     # If recent feedback is positive, be more inclusive with similar document types
@@ -126,7 +161,10 @@ def memory_enhanced_grade_documents(state: Dict[str, Any]) -> Dict[str, Any]:
     if result.get('documents'):
         grading_quality = len(result['documents']) / len(state.get('documents', [1]))
         # This could be used to improve future grading thresholds
-        global_memory_manager.performance_metrics['vectorstore_scores'].append(grading_quality)
+        try:
+            session_memory_manager.performance_metrics['vectorstore_scores'].append(grading_quality)
+        except Exception as e:
+            print(f"Performance tracking failed: {e}")
     
     return result
 
@@ -145,8 +183,17 @@ def finalize_with_memory_update(state: Dict[str, Any]) -> Dict[str, Any]:
             quality_estimate = 0.8 if state.get('documents') else 0.3
             routing_decision = routing_info.get('decision', 'unknown')
             
-            if routing_decision != 'unknown' and hasattr(global_memory_manager, 'learn_routing_pattern'):
-                global_memory_manager.learn_routing_pattern(
+            # Get session-specific memory manager
+            session_memory_manager = global_memory_manager  # Default fallback
+            if 'session_metadata' in state:
+                from Graph.session_aware_wrapper import global_session_manager_v2
+                session_id = state['session_metadata'].get('session_id', 'default')
+                session_graph = global_session_manager_v2.active_sessions.get(session_id)
+                if session_graph and hasattr(session_graph, 'session_memory_manager'):
+                    session_memory_manager = session_graph.session_memory_manager
+                    
+            if routing_decision != 'unknown' and hasattr(session_memory_manager, 'learn_routing_pattern'):
+                session_memory_manager.learn_routing_pattern(
                     state['messages'][-1].content,
                     routing_decision,
                     quality_estimate

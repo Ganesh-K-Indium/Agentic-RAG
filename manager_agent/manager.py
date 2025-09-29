@@ -62,12 +62,13 @@ class ManagerAgent:
     
     def _get_or_create_session_id(self, user_id: str) -> str:
         """
-        Create a session ID for the user. In a production system, you might want
-        to have longer-lived sessions that persist across multiple API calls.
+        Create a consistent session ID for the user that persists for longer periods.
+        This ensures better caching across multiple queries from the same user.
         """
-        # For now, create a simple session ID with timestamp
+        # Create a session ID that lasts for 24 hours (86400 seconds)
+        # This gives much better caching while still allowing session rotation
         timestamp = int(time.time())
-        return f"{user_id}_{timestamp // 3600}"  # New session every hour
+        return f"{user_id}_{timestamp // 86400}"  # New session every 24 hours
     
     def get_user_session_summary(self, user_id: str) -> Dict[str, Any]:
         """
